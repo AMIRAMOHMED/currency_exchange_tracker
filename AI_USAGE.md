@@ -80,7 +80,70 @@ Built from 3 design images: palette, typography/spacing, and the “Currency Rat
 - Didn’t treat the long setup guides as deliverables — the code structure was the goal.
 - Didn’t keep the mockup’s intraday X-axis or time-range pills — wrong for a weekly currency chart.
 
-*Still to log here later: BLoC wiring, pull-to-refresh, loading/error/empty, real chart data from repo, connectivity banner behavior.*
+---
+
+## Module 5 — BLoC wiring & real data
+
+Wire static screens to use cases. Loading, error, empty, pull-to-refresh.
+
+| # | Prompt (short) | Model returned | My call |
+|---|---|---|---|
+| 1 | Hook list + details to real repos. BLoC per screen. Loading / error / empty / refresh. | `MainScreenBloc` + `DetailsScreenBloc`, sealed states, use cases via GetIt. Shared `LoadingView`, `ErrorView`, `EmptyView`. | **Edited.** Split **load** vs **refresh** events — refresh keeps data on screen. First load uses `LoadingView`, not a full-screen skeleton. |
+| 2 | Error handling — strings or failures? | Mapped `Result` → `MainError` / `DetailsError` with `AppFailure`; `ErrorView` reads `error.userMessage` and picks wifi icon for `NetworkFailure`. | **Accepted.** One failure type end-to-end, same as the data layer. |
+| 3 | Refresh failed mid-session — wipe the screen? | On refresh error, re-emit previous success state so stale data stays visible. Full error screen only when there was nothing to show yet. | **Accepted.** Matches Module 3 offline behavior: cached rows beat a blank error. |
+| 4 | Loading UI — spinner or skeleton? | First pass: full-screen `MainScreenShimmer` + `DetailsScreenShimmer` built from `ShimmerBox`. | **Rejected** full-screen shimmers — too much layout to maintain for two screens. **Edited:** kept `LoadingView` (spinner) for screen load. Added `shimmer` package + `ChartShimmerSkeleton` only — chart-shaped placeholder with axis labels and a wave path, because `fl_chart` can't render without real points. `ShimmerBox` stays as a small reusable block if I need it later. |
+| 5 | Details: chart from repo, offline banner, empty chart. | Real `HistoryPoint` list → `SevenDayCurrencyChart`. `OfflineStatusBanner` when `currency.isCached`. `< 2` points → `EmptyView`. | **Accepted.** Header still comes from the list row; chart fetches on tap only (Module 2). |
+| 6 | Keep BLoCs thin? | Screens dispatch events; blocs call one use case; `switch` on `Result` in a private `_toState`. No connectivity logic inside feature blocs. | **Accepted.** Connectivity stays in the global Cubit (Module 4). Feature blocs only care about fetch results. |
+
+### What shipped
+
+- List: `LoadMain` / `RefreshMainData` → `MainScreenBloc` → live rates + daily change
+- Details: `LoadDetails` / `RefreshDetailsData` → 7-day chart from `GetCurrencyHistoryUseCase`
+- `LoadingView` spinner on first load; `RefreshIndicator` on success; retry on hard error
+- `ChartShimmerSkeleton` + `ShimmerBox` (`shimmer` package) — chart-area placeholder only
+- Refresh failure → keep last good data instead of swapping to error view
+
+### What I pushed back on
+
+- One event with a `refresh` flag — harder to read than separate load/refresh types
+- Full-screen list/details shimmer screens — deleted; spinner is enough for the list
+- Replacing the whole screen with `LoadingView` on pull-to-refresh
+- Putting `AppFailure` mapping inside widgets — stays in bloc + `ErrorView`
+
+---
+
+## Module 4 — Connectivity banner
+
+Offline UX: show when the radio drops, without changing how repos fetch data.
+
+| # | Prompt (short) | Model returned | My call |
+|---|---|---|---|
+| 1 | Should I add `connectivity_plus`, or is the current offline flow enough? Search hard. | Full audit: Hive fallback in repos, `NetworkFailure` → `ErrorView`, `isCached` on details only. Said **don't** use the plugin to gate requests — interface up ≠ API reachable. Gaps: list screen hides stale data, no auto-refresh on reconnect, release Android missing `INTERNET`. | **Accepted** the analysis. Current repo flow stays the source of truth. I still wanted a visible offline signal, so I didn't stop at "no plugin." |
+| 2 | I'll add the plugin + a banner when internet is lost; leave everything else as-is. | Agreed in principle, but pushed back: banner should also respect `isCached`, auto-refresh on reconnect, and use two widgets (thin strip vs tall card). | **Edited.** I only wanted one global banner, not changes to list/details screens or other BLoCs. Ignored the auto-refresh and list-screen `isCached` banner for now. |
+| 3 | What does "strip" mean? | ASCII mockup: thin top bar ("No internet connection") vs existing `OfflineStatusBanner` card with date + refresh. | **Accepted** the distinction. Picked the thin strip for connectivity, kept the card on details for cached data. |
+| 4 | Thin strip + reuse card on list (recommended option). | Started building: service, strip, touched `MainScreenBloc` and list screen. | **Rejected** that wiring. Told it: global Cubit above `MaterialApp`, banner in app shell only — **no other BLoC, no screen changes.** |
+| 5 | Global Cubit + app-level banner only. | Reverted screen/BLoC edits. Added `ConnectivityService`, `ConnectivityCubit`, `ConnectivityBanner` in `MaterialApp.builder`. Registered service in GetIt; `start()` before first frame. | **Accepted** the shape. Matches what I asked for. |
+| 6 | Add release permissions for iOS and Android; read the package docs. | Read `connectivity_plus` README + plugin manifest. Android: `INTERNET` (app) + `ACCESS_NETWORK_STATE` (plugin). iOS: nothing — `NWPathMonitor`, no plist keys. | **Accepted** Android permissions in main manifest. **Accepted** leaving iOS plist alone — adding fake keys would be wrong. |
+| 7 | Delete unused code in `ConnectivityService`. | Removed `dispose()`, unused `Connectivity?` constructor param, `_subscription` field (only existed for dispose). | **Accepted.** Service is a app-lifetime singleton; no need to cancel. |
+| 8 | Clean comments on all connectivity files. | Stripped doc blocks and inline notes from service, cubit, banner, injection, Android manifest. | **Accepted.** Code is small enough to read without the essay comments. |
+| 9 | Write this log entry for the connectivity work. Googled how people write AI usage logs first. | Researched: log **judgment** (kept / edited / rejected + why), not every chat line. Brief entries tied to deliverables. | **Edited** into this section. Same table style as the rest of the file. |
+
+### What shipped
+
+- `connectivity_plus` — UI signal only, never gates Dio calls
+- `ConnectivityService` → `ConnectivityCubit` → `ConnectivityBanner` (app-wide teal bar)
+- Repos unchanged: network fail → Hive fallback, same as Module 3
+- Android release: `INTERNET` + `ACCESS_NETWORK_STATE`
+- Details screen still uses `OfflineStatusBanner` when `currency.isCached`
+
+### What I pushed back on
+
+- Using connectivity status to skip API calls or pick cache
+- Wiring banner into `MainScreenBloc` or list/details screens
+- Auto-refresh on reconnect (would need BLoC changes I didn't want)
+- `isCached` banner on the home list (same reason)
+- iOS plist entries the plugin docs don't require
+- Long architecture comments in every connectivity file
 
 ---
 
@@ -107,5 +170,18 @@ Built from 3 design images: palette, typography/spacing, and the “Currency Rat
 - Positive/negative still green/red with arrows
 - Details chart = always 7 days; no fake intraday axis
 - “Past 7 Days” header instead of time-range tabs
+
+**Connectivity**
+
+- Plugin for banner only; offline data still decided by failed requests + Hive
+- Global `ConnectivityCubit` + `MaterialApp.builder` banner — screens stay dumb
+- Thin connectivity bar app-wide; tall cached-data card stays on details only
+
+**BLoC / state**
+
+- Separate load vs refresh events; `LoadingView` on first load, not full-screen shimmer
+- Shimmer scoped to chart placeholder only (`ChartShimmerSkeleton`)
+- Errors carry `AppFailure`; refresh failure keeps previous success data
+- Feature blocs fetch only — no connectivity coupling
 
 Commit this file with the code so GitHub renders it and the history stays honest.

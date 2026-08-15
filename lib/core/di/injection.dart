@@ -12,6 +12,7 @@ import '../../features/currency/domain/repositories/currency_history_repository.
 import '../../features/currency/domain/repositories/currency_repository.dart';
 import '../../features/currency/domain/usecases/get_currencies_usecase.dart';
 import '../../features/currency/domain/usecases/get_currency_history_usecase.dart';
+import '../network/connectivity_service.dart';
 import '../network/dio_client.dart';
 
 final GetIt sl = GetIt.instance;
@@ -24,7 +25,11 @@ Future<void> configureDependencies() async {
     CurrencyHistoryLocalDataSourceImpl.boxName,
   );
 
+  final connectivity = ConnectivityServiceImpl();
+  await connectivity.start();
+
   sl
+    ..registerSingleton<ConnectivityService>(connectivity)
     ..registerLazySingleton<DioClient>(DioClient.new)
     ..registerLazySingleton<CurrencyRemoteDataSource>(
       () => CurrencyRemoteDataSourceImpl(sl<DioClient>()),
