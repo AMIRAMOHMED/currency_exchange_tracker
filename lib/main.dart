@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import 'core/di/injection.dart';
+import 'core/theme/app_theme.dart';
 import 'hive/hive_registrar.g.dart';
+import 'presentation/screens/currency_rates_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,10 +23,9 @@ class CurrencyExchangeTrackerApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Currency Exchange Tracker',
-      theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
-      home: const Scaffold(
-        body: Center(child: Text('Currency Exchange Tracker')),
-      ),
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.lightTheme,
+      home: const CurrencyRatesScreen(),
     );
   }
 }
