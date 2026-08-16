@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 
 import 'package:currency_exchange_tracker/core/theme/app_colors.dart';
 
@@ -17,19 +18,21 @@ class CurrencyFlagAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final size = radius * 2;
 
-    return CircleAvatar(
-      radius: radius,
-      backgroundColor: AppColors.border,
-      child: ClipOval(
-        child: Image.asset(
-          flagAsset,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) => Icon(
-            Icons.flag,
-            color: AppColors.textSecondary,
-            size: radius,
+    return Skeleton.ignore(
+      child: CircleAvatar(
+        radius: radius,
+        backgroundColor: AppColors.border,
+        child: ClipOval(
+          child: Image.asset(
+            flagAsset,
+            width: size,
+            height: size,
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) => Icon(
+              Icons.flag,
+              color: AppColors.textSecondary,
+              size: radius,
+            ),
           ),
         ),
       ),

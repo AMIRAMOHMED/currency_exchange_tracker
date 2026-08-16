@@ -1,18 +1,13 @@
 import 'package:flutter/material.dart';
 
+//that overenginerring delete it
 class ChartWeekSectionHeader extends StatelessWidget {
-  const ChartWeekSectionHeader({
-    super.key,
-    this.title = 'Past 7 Days',
-  });
+  const ChartWeekSectionHeader({super.key, this.title = 'Past 7 Days'});
 
   final String title;
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      title,
-      style: Theme.of(context).textTheme.titleMedium,
-    );
+    return Text(title, style: Theme.of(context).textTheme.titleMedium);
   }
 }

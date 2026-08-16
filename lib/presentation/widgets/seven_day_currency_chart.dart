@@ -21,7 +21,7 @@ class SevenDayCurrencyChart extends StatelessWidget {
     required this.points,
     this.currencySymbol = '',
     this.useDayNumbers = false,
-  }) : assert(points.length == 7, 'Chart requires exactly 7 daily points.');
+  }) : assert(points.length >= 2, 'Chart requires at least 2 daily points.');
 
   final List<CurrencyChartPoint> points;
   final String currencySymbol;
@@ -59,7 +59,7 @@ class SevenDayCurrencyChart extends StatelessWidget {
       child: LineChart(
         LineChartData(
           minX: 0,
-          maxX: 6,
+          maxX: (points.length - 1).toDouble(),
           minY: minY,
           maxY: maxY,
           gridData: FlGridData(
@@ -126,7 +126,7 @@ class SevenDayCurrencyChart extends StatelessWidget {
               tooltipBorderRadius: BorderRadius.circular(8),
               getTooltipItems: (touchedSpots) {
                 return touchedSpots.map((spot) {
-                  final index = spot.x.round().clamp(0, 6);
+                  final index = spot.x.round().clamp(0, points.length - 1);
                   final label = _labelForIndex(index);
 
                   return LineTooltipItem(
@@ -190,11 +190,18 @@ class SevenDayCurrencyChart extends StatelessWidget {
       return 'Day ${index + 1}';
     }
 
-    return _weekdayLabels[index];
+    if (index >= 0 && index < _weekdayLabels.length) {
+      return _weekdayLabels[index];
+    }
+
+    return 'Day ${index + 1}';
   }
 
   bool _isWholeDayIndex(double value) {
-    return value >= 0 && value <= 6 && (value - value.round()).abs() < 0.001;
+    final lastIndex = points.length - 1;
+    return value >= 0 &&
+        value <= lastIndex &&
+        (value - value.round()).abs() < 0.001;
   }
 
   bool _isNearAny(double value, List<double> targets) {

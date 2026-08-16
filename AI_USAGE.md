@@ -1,187 +1,133 @@
 # AI usage log
 
-Tool: **Cursor** (agent chat). I used it for scaffolding, API design, and the presentation layer. I still made the architecture calls — what to keep, what to cut, and how the UI should behave.
+**Tool:** Cursor (agent chat)  
+**Scope:** scaffolding, API design, presentation layer — I still chose what to keep, cut, and ship.
 
-Format: **prompt → what the model returned → I accepted / edited / rejected, and why.**
-
-Only meaningful prompts are listed. Small follow-ups (“fix that lint”) are skipped.
-
----
-
-## Shared / core
-
-Errors, Dio, GetIt, `main`. Everything else sits on this.
-
-| # | Prompt (short) | Model returned | My call |
-|---|---|---|---|
-| 1 | Clean Architecture + Dio + Hive CE. Start with `core/errors/` and folders. Then: core/domain/data only, empty presentation. | `AppFailure`, `Result`, Dio mapper, `RestErrorParser.safeCall`, Dio client, GetIt, Hive adapters. | **Edited.** Kept `safeCall` (no raw exceptions out of data). Dropped pass-through use cases and fields the UI never shows. |
-| 2 | Use my Equatable `Success` / `Failure`, not `fold` / `isSuccess`. | First a fat `Result`, then my sealed pair. | **Accepted** my shape. I want `switch` at the call site. |
-| 3 | Write this log; look up how people write AI usage notes. | First draft of this file. | **Edited.** Split by module so presentation could be filled later. |
+Each row: **what I asked → what the model did → my decision (accepted / edited / rejected) and why.**  
+Small fixes (“fix lint”) are skipped. This is a judgment log, not a chat transcript — reviewers should see *why* I agreed or pushed back, not every message I typed.
 
 ---
 
-## Module 1 — Exchange rates list
+## Core setup
 
-Home: 5 pairs, latest + yesterday, daily change, green/red.
+Errors, Dio, Hive CE, GetIt, `main.dart`.
 
-| # | Prompt (short) | Model returned | My call |
+| # | What I asked | Model output | Decision |
 |---|---|---|---|
-| 1 | Domain felt overengineered. Unused UI data out. Compare before overwrite. | Big domain first (`CurrencyEntity`, extra use cases). After pushback: `DayRates`, `Currency`, `GetCurrenciesUseCase`, one Hive box. | **Edited, then accepted the thin version.** Two repo calls in the use case: `getLatest` + `getByDate(yesterday)`. Change = today − yesterday. |
-| 2 | Green if EGP stronger, red if weaker. Then: one flag only. | `isEgpStronger` + `isEgpWeaker`, then only `isEgpStronger`. | **Accepted** one flag. UI will branch true/false. |
-| 3 | Yesterday — how? | Yesterday = day before the **API** date, not the phone clock. | **Accepted.** Avoids a wrong day if the API is still on “yesterday.” |
+| 1 | Clean Architecture + Dio + Hive. Start with `core/errors/`, then domain/data only. | `AppFailure`, `Result`, Dio client, `safeCall`, GetIt, Hive adapters. | **Edited.** Kept `safeCall` so data layer never throws raw exceptions. Dropped unused fields and pass-through use cases. |
+| 2 | Use my Equatable `Success` / `Failure` — no `fold` / `isSuccess`. | Switched to my sealed pair after a heavier first pass. | **Accepted.** `switch` at call sites reads cleaner. |
+| 3 | Write this log; check how others document AI use. | First version of this file; updated as each module landed. | **Edited** each time — same table format, focus on decisions not prompts. |
 
 ---
 
-## Module 2 — Detail & 7-day chart
+## Module 1 — Home list (5 currencies)
 
-Tap one currency. Header from the list row. Chart = 7 dates, extract that code.
+Latest rate + yesterday, daily change, green/red.
 
-| # | Prompt (short) | Model returned | My call |
+| # | What I asked | Model output | Decision |
 |---|---|---|---|
-| 1 | Why 7 fetches? Can I download USD only? | Task: 7 historical URLs, each file has all currencies, take one for the line. No USD-only URL. | **Rejected** “store USD only.” **Accepted** lazy load: no chart fetch until tap. |
-| 2 | Ask the repo for 7 days of USD, not 7 days of 5 currencies. | `getHistory` on the repo, then a fat repo. | **Edited then later reversed.** First: repo = one day. Then: only the tapped chart is offline. Separate `CurrencyHistoryRepository` + Hive box keyed by code. |
+| 1 | Domain is overbuilt. Strip what the UI doesn't need. Compare before overwrite. | Fat domain first, then thin: `DayRates`, `Currency`, `GetCurrenciesUseCase`, one Hive box. | **Edited → accepted.** Use case calls `getLatest` + `getByDate(yesterday)`. Change = today − yesterday. |
+| 2 | Green when EGP is stronger, red when weaker. Then: one flag only. | Two flags, then `isEgpStronger` alone. | **Accepted.** UI branches on true/false. |
+| 3 | How is “yesterday” defined? | Day before the **API** date, not device clock. | **Accepted.** Correct when the API is still serving yesterday's file. |
+
+---
+
+## Module 2 — Details & 7-day chart
+
+Tap a row → header from list, chart from 7 daily files for that code.
+
+| # | What I asked | Model output | Decision |
+|---|---|---|---|
+| 1 | Why 7 network calls? Can I fetch USD only? | API serves full `egp.json` per day; extract one code. No single-currency URL. | **Rejected** “USD-only storage.” **Accepted** lazy load — chart fetch only on tap. |
+| 2 | Repo should return 7 days for one code, not 7 days × 5 codes. | `getHistory` on repo; repo got bloated. | **Edited, then reversed.** Split `CurrencyHistoryRepository` + Hive box keyed by code. Only the opened chart goes offline. |
 
 ---
 
 ## Module 3 — Offline cache
 
-Persist last fetched rates. Offline → cache + last updated. Back online → refresh.
+Save last fetched rates. Offline → show cache + last updated.
 
-| # | Prompt (short) | Model returned | My call |
+| # | What I asked | Model output | Decision |
 |---|---|---|---|
-| 1 | Filter to 5 currencies before cache. | Filter + invert in `DayRatesModel.fromJson`. | **Accepted.** HTTP is still full `egp.json`. We only keep 5 numbers per day. |
-| 2 | Don’t rewrite Hive if data is the same. One box. | `put` by date. Skip write if Equatable match. Drop keys older than 14 days. | **Accepted.** `getLatest` = network first. `getByDate` = cache first (a published day does not change). |
-| 3 | Save a day when the user actually loads it. | Same write path on successful fetch. | **Edited.** Home still saves 2 days × 5 rates. Chart does **not** write those extra days into the rates box. |
-| 4 | Offline after USD tap, then EUR — should EUR chart load? | Yes, same 7 Hive days have all 5 rates. | **Rejected.** Task: persist last fetched rates for the **list**. A chart is offline only if **that pair** was opened. Other pairs show offline. |
+| 1 | Keep only 5 currencies before writing to Hive. | Filter in `DayRatesModel.fromJson`. | **Accepted.** HTTP is still full JSON; cache holds 5 rates per day. |
+| 2 | Don't rewrite Hive if nothing changed. One box. | Skip `put` on Equatable match. Trim keys older than 14 days. | **Accepted.** `getLatest` = network first. `getByDate` = cache first. |
+| 3 | Save when user loads data. | Same write path on success. | **Edited.** Home saves 2 days × 5 rates. Chart days don't pollute the rates box. |
+| 4 | Offline after opening USD — should EUR chart work from cache? | Yes — same 7 Hive days have all 5 codes. | **Rejected.** Task says list is offline; each chart is offline only if **that pair** was opened before. |
 
 ---
 
-## Presentation — UI build (static screen)
+## Presentation — Static UI (before BLoC)
 
-Built from 3 design images: palette, typography/spacing, and the “Currency Rates” mockup. **Presentation only** — no BLoC/Cubit/Provider; dummy data for now.
+Built from design images. No state management yet.
 
-| # | Prompt (short) | Model returned | My call |
+| # | What I asked | Model output | Decision |
 |---|---|---|---|
-| 1 | Build the home UI from scratch from 3 images. Phase 1: `core/theme/` (colors, typography, spacing, `ThemeData`). Phase 2: reusable widgets in `shared/widgets/`. Phase 3: screen in `presentation/screens/`. No state management; static data. Responsive layout — no hardcoded pixel sizes. | **Phase 1:** `app_colors.dart`, `app_typography.dart`, `app_spacing.dart`, `app_theme.dart` from the palette and Inter type scale. **Phase 2:** `CurrencyCard`, `ChangeIndicator`, `SummaryInfoCard`. **Phase 3:** `CurrencyRatesScreen` with AppBar, summary card, 5 currency rows, disclaimer. Wired `main.dart` + `pubspec.yaml` (Inter fonts, `assets/flags/`). Also wrote setup docs and flag/font READMEs. | **Accepted** the folder split and widget extraction — matches how I wanted the presentation layer organized. **Edited:** I didn’t ask for all the extra markdown guides; I kept the code, skimmed the docs. **Edited:** `CardTheme` → `CardThemeData` after analyzer complained. **Not done yet:** Inter `.ttf` files and flag PNGs still need to be dropped in before the screen looks right on device. |
-| 2 | If change is 0, no arrow — use blue or whatever color fits. | `ChangeIndicator`: when `changeValue == 0`, hide the arrow and color the text **Primary 500** (`#1FB8CB`) instead of red/green. | **Accepted.** Teal reads as “unchanged” and stays on-brand. JPY (`0.00`) no longer gets a misleading red down arrow. I might switch to gray later if teal feels too loud — easy one-line change. |
-| 3 | Update `AI_USAGE.md` for this UI work too. Search how to write it; brief, human, but enough for reviewers to see my judgment. | Researched prompt-log / design-log patterns (problem → decision → trade-off, not a raw chat dump). Updated this file. | **Edited.** Merged into the existing log instead of a second file. Same table style as the backend entries. |
-| 4 | Build Details screen from screenshot. `fl_chart ^1.2.0`. Chart = 7 days on X-axis, currency values on Y-axis. Presentation only, mock data. Extract chart + sub-widgets. Responsive (`AspectRatio`, flexible layout). Reuse theme and `ChangeIndicator`. | `DetailsScreen`, `SevenDayCurrencyChart`, header/offline banner/stats/disclaimer widgets. Added `fl_chart` dep. Wired list → details navigation. First pass still had `1D–1Y` tabs and X-axis behaved like time slots from the mockup. | **Accepted** modular split and chart styling (line, gradient, dot, grid, tooltip). **Edited:** chart override — 7 weekday labels, not hourly times. **Edited:** dropped `$` on Y-axis; plain decimals (`48.00`) fit EGP rates better. **Edited:** `CardTheme`-style fixes and `SideTitleWidget` for axis labels after analyzer / layout issues. |
-| 5 | Fix chart X-axis and range labels. Replace time titles with Mon–Sun (or Day 1–7). Remove `1D, 1W, 1M, 3M, 1Y` tabs — use a “Past 7 Days” header instead. | Updated `SevenDayCurrencyChart` to only label whole indices 0–6 with Mon–Sun. Y-axis shows 4 clean grid steps. Deleted `TimeRangeSelector`; added `ChartWeekSectionHeader`. | **Accepted.** Tabs were misleading for a fixed 7-day chart. Header is clearer. Weekday labels auto from index so mock data stays simple. |
-
-### What I kept from the AI output
-
-- Theme tokens in one place — widgets reference `AppColors` / `AppTypography` / `AppSpacing`, not magic numbers.
-- Compound widgets instead of one giant screen file (list + details).
-- `SafeArea`, `LayoutBuilder`, `SingleChildScrollView`, `Expanded`, `AspectRatio` for responsiveness.
-
-### What I pushed back on (implicitly, by scope)
-
-- No state management hook-up — intentional; BLoC comes when I wire the list to `GetCurrenciesUseCase`.
-- Didn’t treat the long setup guides as deliverables — the code structure was the goal.
-- Didn’t keep the mockup’s intraday X-axis or time-range pills — wrong for a weekly currency chart.
-
----
-
-## Module 5 — BLoC wiring & real data
-
-Wire static screens to use cases. Loading, error, empty, pull-to-refresh.
-
-| # | Prompt (short) | Model returned | My call |
-|---|---|---|---|
-| 1 | Hook list + details to real repos. BLoC per screen. Loading / error / empty / refresh. | `MainScreenBloc` + `DetailsScreenBloc`, sealed states, use cases via GetIt. Shared `LoadingView`, `ErrorView`, `EmptyView`. | **Edited.** Split **load** vs **refresh** events — refresh keeps data on screen. First load uses `LoadingView`, not a full-screen skeleton. |
-| 2 | Error handling — strings or failures? | Mapped `Result` → `MainError` / `DetailsError` with `AppFailure`; `ErrorView` reads `error.userMessage` and picks wifi icon for `NetworkFailure`. | **Accepted.** One failure type end-to-end, same as the data layer. |
-| 3 | Refresh failed mid-session — wipe the screen? | On refresh error, re-emit previous success state so stale data stays visible. Full error screen only when there was nothing to show yet. | **Accepted.** Matches Module 3 offline behavior: cached rows beat a blank error. |
-| 4 | Loading UI — spinner or skeleton? | First pass: full-screen `MainScreenShimmer` + `DetailsScreenShimmer` built from `ShimmerBox`. | **Rejected** full-screen shimmers — too much layout to maintain for two screens. **Edited:** kept `LoadingView` (spinner) for screen load. Added `shimmer` package + `ChartShimmerSkeleton` only — chart-shaped placeholder with axis labels and a wave path, because `fl_chart` can't render without real points. `ShimmerBox` stays as a small reusable block if I need it later. |
-| 5 | Details: chart from repo, offline banner, empty chart. | Real `HistoryPoint` list → `SevenDayCurrencyChart`. `OfflineStatusBanner` when `currency.isCached`. `< 2` points → `EmptyView`. | **Accepted.** Header still comes from the list row; chart fetches on tap only (Module 2). |
-| 6 | Keep BLoCs thin? | Screens dispatch events; blocs call one use case; `switch` on `Result` in a private `_toState`. No connectivity logic inside feature blocs. | **Accepted.** Connectivity stays in the global Cubit (Module 4). Feature blocs only care about fetch results. |
-
-### What shipped
-
-- List: `LoadMain` / `RefreshMainData` → `MainScreenBloc` → live rates + daily change
-- Details: `LoadDetails` / `RefreshDetailsData` → 7-day chart from `GetCurrencyHistoryUseCase`
-- `LoadingView` spinner on first load; `RefreshIndicator` on success; retry on hard error
-- `ChartShimmerSkeleton` + `ShimmerBox` (`shimmer` package) — chart-area placeholder only
-- Refresh failure → keep last good data instead of swapping to error view
-
-### What I pushed back on
-
-- One event with a `refresh` flag — harder to read than separate load/refresh types
-- Full-screen list/details shimmer screens — deleted; spinner is enough for the list
-- Replacing the whole screen with `LoadingView` on pull-to-refresh
-- Putting `AppFailure` mapping inside widgets — stays in bloc + `ErrorView`
+| 1 | Home UI from 3 images. Theme → shared widgets → screen. Responsive, no magic pixels. | `app_colors/typography/spacing/theme`, `CurrencyCard`, `ChangeIndicator`, `SummaryInfoCard`, `CurrencyRatesScreen`. | **Accepted** structure. **Edited:** skipped extra markdown guides; fixed `CardTheme` → `CardThemeData`. |
+| 2 | Zero change → no arrow, use brand color. | `ChangeIndicator` hides arrow, uses Primary 500 for flat days. | **Accepted.** JPY at 0.00 no longer shows a fake red arrow. |
+| 3 | Details screen + `fl_chart`. 7-day line chart, mock data, extract widgets. | `DetailsScreen`, `SevenDayCurrencyChart`, header/banner widgets. Had wrong time-range tabs at first. | **Accepted** modular split. **Edited:** Mon–Sun labels not hourly; no `$` on Y-axis; dropped fake 1D–1Y tabs. |
+| 4 | Fix chart axis — weekdays only, “Past 7 Days” header. | Removed `TimeRangeSelector`; added `ChartWeekSectionHeader`. | **Accepted.** Tabs didn't match a fixed 7-day chart. |
 
 ---
 
 ## Module 4 — Connectivity banner
 
-Offline UX: show when the radio drops, without changing how repos fetch data.
+Show when the device loses network. Don't change how repos fetch.
 
-| # | Prompt (short) | Model returned | My call |
+| # | What I asked | Model output | Decision |
 |---|---|---|---|
-| 1 | Should I add `connectivity_plus`, or is the current offline flow enough? Search hard. | Full audit: Hive fallback in repos, `NetworkFailure` → `ErrorView`, `isCached` on details only. Said **don't** use the plugin to gate requests — interface up ≠ API reachable. Gaps: list screen hides stale data, no auto-refresh on reconnect, release Android missing `INTERNET`. | **Accepted** the analysis. Current repo flow stays the source of truth. I still wanted a visible offline signal, so I didn't stop at "no plugin." |
-| 2 | I'll add the plugin + a banner when internet is lost; leave everything else as-is. | Agreed in principle, but pushed back: banner should also respect `isCached`, auto-refresh on reconnect, and use two widgets (thin strip vs tall card). | **Edited.** I only wanted one global banner, not changes to list/details screens or other BLoCs. Ignored the auto-refresh and list-screen `isCached` banner for now. |
-| 3 | What does "strip" mean? | ASCII mockup: thin top bar ("No internet connection") vs existing `OfflineStatusBanner` card with date + refresh. | **Accepted** the distinction. Picked the thin strip for connectivity, kept the card on details for cached data. |
-| 4 | Thin strip + reuse card on list (recommended option). | Started building: service, strip, touched `MainScreenBloc` and list screen. | **Rejected** that wiring. Told it: global Cubit above `MaterialApp`, banner in app shell only — **no other BLoC, no screen changes.** |
-| 5 | Global Cubit + app-level banner only. | Reverted screen/BLoC edits. Added `ConnectivityService`, `ConnectivityCubit`, `ConnectivityBanner` in `MaterialApp.builder`. Registered service in GetIt; `start()` before first frame. | **Accepted** the shape. Matches what I asked for. |
-| 6 | Add release permissions for iOS and Android; read the package docs. | Read `connectivity_plus` README + plugin manifest. Android: `INTERNET` (app) + `ACCESS_NETWORK_STATE` (plugin). iOS: nothing — `NWPathMonitor`, no plist keys. | **Accepted** Android permissions in main manifest. **Accepted** leaving iOS plist alone — adding fake keys would be wrong. |
-| 7 | Delete unused code in `ConnectivityService`. | Removed `dispose()`, unused `Connectivity?` constructor param, `_subscription` field (only existed for dispose). | **Accepted.** Service is a app-lifetime singleton; no need to cancel. |
-| 8 | Clean comments on all connectivity files. | Stripped doc blocks and inline notes from service, cubit, banner, injection, Android manifest. | **Accepted.** Code is small enough to read without the essay comments. |
-| 9 | Write this log entry for the connectivity work. Googled how people write AI usage logs first. | Researched: log **judgment** (kept / edited / rejected + why), not every chat line. Brief entries tied to deliverables. | **Edited** into this section. Same table style as the rest of the file. |
-
-### What shipped
-
-- `connectivity_plus` — UI signal only, never gates Dio calls
-- `ConnectivityService` → `ConnectivityCubit` → `ConnectivityBanner` (app-wide teal bar)
-- Repos unchanged: network fail → Hive fallback, same as Module 3
-- Android release: `INTERNET` + `ACCESS_NETWORK_STATE`
-- Details screen still uses `OfflineStatusBanner` when `currency.isCached`
-
-### What I pushed back on
-
-- Using connectivity status to skip API calls or pick cache
-- Wiring banner into `MainScreenBloc` or list/details screens
-- Auto-refresh on reconnect (would need BLoC changes I didn't want)
-- `isCached` banner on the home list (same reason)
-- iOS plist entries the plugin docs don't require
-- Long architecture comments in every connectivity file
+| 1 | Add `connectivity_plus` or is current offline flow enough? Search properly. | Audit: Hive fallback works, `NetworkFailure` handled, gaps in UX (no banner, no auto-refresh). | **Accepted** analysis. Still wanted a visible signal — didn't stop at "no plugin." |
+| 2 | Plugin + banner only; leave repos alone. | Also suggested auto-refresh, `isCached` on list, two banner types. | **Edited.** I only wanted one global strip — no BLoC or screen changes. |
+| 3 | Global Cubit + app-level banner. | `ConnectivityService` → `ConnectivityCubit` → `ConnectivityBanner` in `MaterialApp.builder`. | **Accepted.** Repos unchanged. Android got `INTERNET` + `ACCESS_NETWORK_STATE`; iOS left alone per plugin docs. |
+| 4 | Remove dead code and comment noise. | Trimmed unused fields/methods in service; stripped long comments. | **Accepted.** Small files don't need essay comments. |
 
 ---
 
-## Tests & other
+## Module 5 — BLoC + real data
 
-| # | Prompt (short) | Model returned | My call |
+Wire screens to real use cases. Loading, empty, error, pull-to-refresh. Longest session — several "simplify" and "why is refresh stuck?" rounds.
+
+| # | What I asked | Model output | Decision |
 |---|---|---|---|
-| — | — | — | — |
+| 1 | BLoC + Equatable for both screens. **Mock** use cases in `lib/domain/`. | Mock domain (`FetchMainDataUseCase`, `FetchDetailsDataUseCase`, fake models). Two blocs, 5 states each, Fetch/Refresh events. | **Rejected.** Real use cases already exist. Told it: presentation only, delete mocks, don't touch domain. |
+| 2 | Use real use cases. Presentation layer only. | Deleted mocks. Wired `GetCurrenciesUseCase` / `GetCurrencyHistoryUseCase`. Shared `LoadingView`, `ErrorView`, `EmptyView`. | **Accepted.** Kept separate `event` / `state` / `bloc` files per screen. |
+| 3 | Pull-to-refresh spinner never stops. | **Bug:** `Equatable` skips re-emit when data is unchanged → `stream.firstWhere` in `RefreshIndicator` waits forever. **Fix:** `isRefreshing: true/false` on success state. | **Accepted.** Also: no full `Loading` screen during refresh — list stays visible. |
+| 4 | Explain the bug / I still don't get it. | Technical walkthrough, then plain analogy (waiter never says "done" if the plate looks identical). | **Accepted** for learning. No code change. |
+| 5 | Simplify states, events, files. | Tried one file per bloc. | **Rejected.** Kept 3 files per bloc but fewer states — empty = success with empty list, not its own state. |
+| 6 | Why `stream` in the bloc? Over-engineered. | Moved wait to UI `_refresh()`; removed `reload()` from blocs. | **Accepted.** Bloc toggles `isRefreshing`; screen awaits `!isRefreshing`. |
+| 7 | Google: senior best practice for BLoC + pull-to-refresh? | Don't replace content with loading on refresh; flag on success; let `RefreshIndicator` own the Future. | **Accepted.** Matches what we fixed in #3. |
+| 8 | Make details bloc match main bloc. | Removed leftover `reload()` from details. | **Accepted.** Both blocs symmetric now. |
+| 9 | Delete unused code and redundant bits. | Cleanup pass; briefly broke build by removing a needed import, fixed it. | **Accepted.** Nothing dead left in presentation/connectivity. |
+| 10 | Why both `isOffline` and `userMessage` for network errors? Refactor? | Duplication — message already describes network failure; flag only changed icon/title. Proposed: state holds `AppFailure`, widget checks type. | **Accepted.** One mapping point in `ErrorView`, not in every bloc. |
+| 11 | Pass `AppFailure` through; reusable `ErrorView` + network factory. | `MainError(error)` / `DetailsError(error)`. `ErrorView` picks icon/title from `error is NetworkFailure`. `ErrorView.network(...)` factory. Refresh failure → restore `previousData`. | **Accepted.** Bloc line is now `Failure(:final error) => MainError(error)`. |
+| 12 | Rewrite this log for the BLoC session. Human tone, brief, enough for reviewers. | Researched provenance patterns; rewrote this section. | **Edited** — you're reading it. |
+
+**What shipped**
+
+- Two blocs on real use cases; separate **load** vs **refresh** events
+- `isRefreshing` on success + UI `stream.firstWhere` for `RefreshIndicator`
+- Refresh error → keep last good data, don't flash error screen
+- Errors carry `AppFailure`; `ErrorView` handles copy and visuals
+- List loading: `CurrencyCardShimmer`; details: spinner / chart shimmer
+
+**What I pushed back on**
+
+- Mock domain when real repos already existed
+- One mega-file per bloc
+- `reload()` + stream logic inside blocs
+- `isOffline` bool next to a message that already says "no internet"
+- Full-screen loading replacing the list on pull-to-refresh
 
 ---
 
-## Decisions I made without taking the first AI answer
+## Key decisions (mine, not the model's first answer)
 
-**Backend**
+| Area | Decision |
+|---|---|
+| **Data** | Home cache = 5 rates/day. Chart cache = one series per opened code. Chart fetch on tap only. |
+| **UI** | Static screens first, then wire data. Zero change = teal, no arrow. 7-day chart, no fake intraday axis. |
+| **Connectivity** | Plugin = banner only. Repos still decide offline via failed request + Hive. Global cubit, dumb screens. |
+| **BLoC** | Real use cases, no mocks. Load vs refresh events. `isRefreshing` fixes Equatable refresh bug. Errors = `AppFailure` end-to-end. |
 
-- Home Hive: 5 rates per day (offline list without opening details)
-- Chart Hive: one series per tapped code (other charts stay offline)
-- Chart on tap only; Dio still `egp.json`, then extract that code
+---
 
-**Presentation**
-
-- Static UI first, real data later
-- Zero change = no arrow, Primary 500 (not red/green)
-- Positive/negative still green/red with arrows
-- Details chart = always 7 days; no fake intraday axis
-- “Past 7 Days” header instead of time-range tabs
-
-**Connectivity**
-
-- Plugin for banner only; offline data still decided by failed requests + Hive
-- Global `ConnectivityCubit` + `MaterialApp.builder` banner — screens stay dumb
-- Thin connectivity bar app-wide; tall cached-data card stays on details only
-
-**BLoC / state**
-
-- Separate load vs refresh events; `LoadingView` on first load, not full-screen shimmer
-- Shimmer scoped to chart placeholder only (`ChartShimmerSkeleton`)
-- Errors carry `AppFailure`; refresh failure keeps previous success data
-- Feature blocs fetch only — no connectivity coupling
-
-Commit this file with the code so GitHub renders it and the history stays honest.
+Commit this file with the code — GitHub renders it and the history stays honest.

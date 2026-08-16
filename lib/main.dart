@@ -6,7 +6,7 @@ import 'core/di/injection.dart';
 import 'core/network/connectivity_service.dart';
 import 'core/theme/app_theme.dart';
 import 'hive/hive_registrar.g.dart';
-import 'presentation/bloc/connectivity/connectivity_cubit.dart';
+import 'presentation/bloc/connectivity/connectivity_bloc.dart';
 import 'presentation/screens/currency_rates_screen.dart';
 import 'shared/widgets/connectivity_banner.dart';
 
@@ -26,7 +26,8 @@ class CurrencyExchangeTrackerApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
-      create: (_) => ConnectivityCubit(sl<ConnectivityService>()),
+      create: (_) => ConnectivityBloc(sl<ConnectivityService>())
+        ..add(const ConnectivityStarted()),
       child: MaterialApp(
         title: 'Currency Exchange Tracker',
         debugShowCheckedModeBanner: false,
