@@ -1,7 +1,7 @@
 import 'package:equatable/equatable.dart';
 
 import '../../../core/errors/app_failure.dart';
-import '../../../features/currency/domain/entities/currency.dart';
+import '../../../features/currency/domain/entities/currency_rate.dart';
 
 sealed class MainState extends Equatable {
   const MainState();
@@ -17,8 +17,18 @@ final class MainLoading extends MainState {
 final class MainSuccess extends MainState {
   const MainSuccess(this.currencies, {this.isRefreshing = false});
 
-  final List<Currency> currencies;
+  final List<CurrencyRate> currencies;
   final bool isRefreshing;
+
+  MainSuccess copyWith({
+    List<CurrencyRate>? currencies,
+    bool? isRefreshing,
+  }) {
+    return MainSuccess(
+      currencies ?? this.currencies,
+      isRefreshing: isRefreshing ?? this.isRefreshing,
+    );
+  }
 
   @override
   List<Object?> get props => [currencies, isRefreshing];

@@ -2,7 +2,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/errors/app_failure.dart';
 import '../../../core/errors/result.dart';
-import '../../../features/currency/domain/entities/currency.dart';
+import '../../../features/currency/domain/entities/currency_rate.dart';
 import '../../../features/currency/domain/entities/history_point.dart';
 import '../../../features/currency/domain/usecases/get_currency_history_usecase.dart';
 import 'details_screen_event.dart';
@@ -17,61 +17,79 @@ class DetailsScreenBloc extends Bloc<DetailsScreenEvent, DetailsState> {
     on<RefreshDetailsData>(_onRefresh);
   }
 
+  static const _chartDays = 7;
+
   final GetCurrencyHistoryUseCase _getHistory;
 
   Future<void> _onLoad(LoadDetails event, Emitter<DetailsState> emit) async {
     emit(const DetailsLoading());
-    await _fetch(event.currency, emit);
+    await emit.forEach<Result<List<HistoryPoint>>>(
+      _getHistory(
+        code: event.currency.code,
+        anchorDate: event.currency.date,
+      ),
+      onData: (result) => _mapLoadResult(result, event.currency),
+      onError: (error, stackTrace) => const DetailsError(UnknownFailure()),
+    );
+
+    final current = state;
+    if (current is DetailsSuccess && current.isChartLoading) {
+      emit(current.copyWith(isChartLoading: false));
+    }
   }
 
   Future<void> _onRefresh(
     RefreshDetailsData event,
     Emitter<DetailsState> emit,
   ) async {
-    if (state is! DetailsSuccess) return;
+    final current = state;
+    if (current is! DetailsSuccess) return;
 
-    final previous = state as DetailsSuccess;
-    emit(
-      DetailsSuccess(
-        currency: previous.currency,
-        history: previous.history,
-        isRefreshing: true,
+    emit(current.copyWith(isRefreshing: true));
+
+    await emit.forEach<Result<List<HistoryPoint>>>(
+      _getHistory(
+        code: event.currency.code,
+        anchorDate: event.currency.date,
+        forceRefresh: true,
       ),
+      onData: (result) => _mapRefreshResult(result, event.currency, current),
+      onError: (error, stackTrace) => current.copyWith(isRefreshing: false),
     );
-    await _fetch(event.currency, emit, previousData: previous);
-  }
 
-  Future<void> _fetch(
-    Currency currency,
-    Emitter<DetailsState> emit, {
-    DetailsSuccess? previousData,
-  }) async {
-    try {
-      final result = await _getHistory(
-        code: currency.code,
-        from: currency.date,
-      );
-      emit(_toState(currency, result, previousData: previousData));
-    } catch (_) {
-      if (previousData != null) {
-        emit(previousData);
-      } else {
-        emit(DetailsError(const UnknownFailure()));
-      }
+    // If the internet data was identical to cache, the stream ends without yielding.
+    // We must manually turn off the spinner here.
+    if (state is DetailsSuccess && (state as DetailsSuccess).isRefreshing) {
+      emit((state as DetailsSuccess).copyWith(isRefreshing: false));
     }
   }
 
-  DetailsState _toState(
-    Currency currency,
-    Result<List<HistoryPoint>> result, {
-    DetailsSuccess? previousData,
-  }) {
+  DetailsState _mapLoadResult(
+    Result<List<HistoryPoint>> result,
+    CurrencyRate currency,
+  ) {
     return switch (result) {
       Success(:final value) => DetailsSuccess(
         currency: currency,
         history: value,
+        isChartLoading: value.length < _chartDays,
       ),
-      Failure(:final error) => previousData ?? DetailsError(error),
+      Failure(:final error) => DetailsError(error),
     };
+  }
+
+  DetailsState _mapRefreshResult(
+    Result<List<HistoryPoint>> result,
+    CurrencyRate currency,
+    DetailsSuccess previous,
+  ) {
+    switch (result) {
+      case Success(:final value) when value.length >= 2:
+        return DetailsSuccess(currency: currency, history: value);
+      case Success():
+        return previous.copyWith(isRefreshing: false);
+      case Failure():
+        return previous.copyWith(isRefreshing: false);
+    }
   }
 }

@@ -29,6 +29,9 @@ Latest rate + yesterday, daily change, green/red.
 | 1 | Domain is overbuilt. Strip what the UI doesn't need. Compare before overwrite. | Fat domain first, then thin: `DayRates`, `Currency`, `GetCurrenciesUseCase`, one Hive box. | **Edited → accepted.** Use case calls `getLatest` + `getByDate(yesterday)`. Change = today − yesterday. |
 | 2 | Green when EGP is stronger, red when weaker. Then: one flag only. | Two flags, then `isEgpStronger` alone. | **Accepted.** UI branches on true/false. |
 | 3 | How is “yesterday” defined? | Day before the **API** date, not device clock. | **Accepted.** Correct when the API is still serving yesterday's file. |
+| 4 | App empty at midnight — API fine. | Phone on Aug 17, API `latest` still Aug 16; old code looked up phone today (missing) and fetched phone yesterday (= same API date twice). | **Fixed.** Read `date` from `latest` → fetch that minus 1 → sort API dates for rate/change. Not the phone clock. |
+
+**Midnight bug (brief):** Phone rolled to a new day before the API did — home looked for a date that wasn't in the response. Fix: anchor on `latest`'s date, fetch the day before, stop matching with the device clock.
 
 ---
 
@@ -36,10 +39,14 @@ Latest rate + yesterday, daily change, green/red.
 
 Tap a row → header from list, chart from 7 daily files for that code.
 
+**Chart / offline bug (brief):** Offline chart stuck at 2 days because home only saves today + yesterday, and the first history fetch used the phone date — one 404 killed all 7 requests. Fix: on tap, show Hive first, then fetch only the missing days for that currency (anchor = newest cached date from home).
+
 | # | What I asked | Model output | Decision |
 |---|---|---|---|
 | 1 | Why 7 network calls? Can I fetch USD only? | API serves full `egp.json` per day; extract one code. No single-currency URL. | **Rejected** “USD-only storage.” **Accepted** lazy load — chart fetch only on tap. |
 | 2 | Repo should return 7 days for one code, not 7 days × 5 codes. | `getHistory` on repo; repo got bloated. | **Edited, then reversed.** Split `CurrencyHistoryRepository` + Hive box keyed by code. Only the opened chart goes offline. |
+| 3 | Offline chart shows 2 days not 7 — USD sometimes 7, GBP 2. Debug it. | First guess: stale memory cache or prefetch 7 days on home. | **Rejected** home prefetch and `_WeekPlan` refactor — too heavy, not the real issue. |
+| 4 | After clearing cache, every currency shows 2 days. Keep details fast. | Root cause: `Future.wait` on 7 device dates; API `latest` is often yesterday → 404 aborts all. | **Fixed.** Read Hive (2 days from home) → yield chart → `getRatesForDates` for missing days only (~5 calls). Skip 404s per date. Anchor = newest local date (user always comes from home). |
 
 ---
 
@@ -76,9 +83,15 @@ Show when the device loses network. Don't change how repos fetch.
 | # | What I asked | Model output | Decision |
 |---|---|---|---|
 | 1 | Add `connectivity_plus` or is current offline flow enough? Search properly. | Audit: Hive fallback works, `NetworkFailure` handled, gaps in UX (no banner, no auto-refresh). | **Accepted** analysis. Still wanted a visible signal — didn't stop at "no plugin." |
-| 2 | Plugin + banner only; leave repos alone. | Also suggested auto-refresh, `isCached` on list, two banner types. | **Edited.** I only wanted one global strip — no BLoC or screen changes. |
+| 2 | Plugin + banner only; leave repos alone. | Also suggested auto-refresh, `isCached` on list, two banner types. | **Edited.** Global strip for no internet only. Stale rates got their own notice later (see below). |
 | 3 | Global Cubit + app-level banner. | `ConnectivityService` → `ConnectivityCubit` → `ConnectivityBanner` in `MaterialApp.builder`. | **Accepted.** Repos unchanged. Android got `INTERNET` + `ACCESS_NETWORK_STATE`; iOS left alone per plugin docs. |
 | 4 | Remove dead code and comment noise. | Trimmed unused fields/methods in service; stripped long comments. | **Accepted.** Small files don't need essay comments. |
+| 5 | Offline card on details felt wrong — said "You're offline" but I only had yesterday's rates. | `OfflineStatusBanner` + `isCached`; duplicate date on the right. | **Edited.** `StaleDataNotice`: show when `date` ≠ today, pass `date` only, home + details. Dropped `isCached`. Clock icon + "Rates from {date}" — top strip still covers no internet. |
+
+**Stale notice (brief):**  
+**Problem:** Details-only card said "You're offline" and used `isCached`, even when I was online with yesterday's API rates.  
+**Why:** `isCached` tracked where data came from, not whether it's today's file — wrong trigger, and it duplicated the top no-internet strip.  
+**Fix:** `StaleDataNotice` on home + details when `date` ≠ today; `date` only, dropped `isCached`, clock icon + "Rates from {date}" — connectivity strip still owns real offline.
 
 ---
 
@@ -119,15 +132,56 @@ Wire screens to real use cases. Loading, empty, error, pull-to-refresh. Longest 
 
 ---
 
+## Architecture refactor
+
+Notes from a long chat — single table, streams, domain cleanup, refresh bug.
+
+| # | What I asked | Model output | Decision |
+|---|---|---|---|
+| 1 | One Hive table or two? API always returns full JSON per date. | Single `ExchangeRateModel` keyed by `date_currency`; repo computes daily change. | **Accepted.** Same shape for home + history, less duplication. |
+| 2 | Home = 2 calls, chart = 7 — how to not waste time? | `Future.wait` in parallel. Home pulls 5 codes; history pulls 1 (per task). | **Accepted.** Can't filter at URL — extract after download. |
+| 3 | Too many types: `CurrencyInfo`, `Currency`, presentation extension. | `SupportedCurrency` enum, rename to `CurrencyRate`, `fromApiJson` on data model. | **Accepted.** JSON parsing stays in data layer, not BLoC. |
+| 4 | Refresh spinner stops early with cache-first streams. | Traced: refresh → `isRefreshing: true` → cache emit → `isRefreshing: false` → network updates silently. | **Fixed.** Refresh passes `forceRefresh: true` (skip cache yield) + separate refresh mapper in bloc. Load still cache-first. |
+| 5 | Midnight / wrong yesterday. | Phone rolled before API `latest` date. | **Fixed earlier** — anchor on API date, not device clock. |
+| 6 | Offline chart stuck at 2 days. | Home only had 2 days; one bad date in `Future.wait` broke the batch. | **Fixed earlier** — Hive first, fetch missing days only for that currency. |
+
+**Single table (from chat):**  
+I had `DayRatesModel` (one row per day, map of 5 rates) plus a separate history box per currency — same data, two shapes. AI suggested one normalized table: `date`, `currency`, `rate`, `updatedAt`, Hive key `2026-08-16_USD`. Home reads today + yesterday for 5 codes; chart reads last 7 rows for one code. Store the raw API rate, invert to EGP in `fromApiJson`. Deleted the old models and the second Hive box.
+
+**Cache-first + refresh (from chat):**  
+Repo stream yields cache first, then network — good for first open. On pull-to-refresh I set `isRefreshing: true`, but the cache emission came back as `MainSuccess(cached)` with `isRefreshing: false`, so the spinner stopped before the API finished. One `onData` handler treated both emissions the same. Fix: load keeps cache-then-network; refresh uses `forceRefresh` to skip the cache yield and a separate refresh mapper so `isRefreshing` only clears when network is done.
+
+---
+
 ## Key decisions (mine, not the model's first answer)
 
 | Area | Decision |
 |---|---|
-| **Data** | Home cache = 5 rates/day. Chart cache = one series per opened code. Chart fetch on tap only. |
+| **Data** | One Hive table (`ExchangeRateModel`). Home = 2 parallel API calls × 5 codes. Chart = lazy on tap, missing days only. Anchor on API/cached date, not phone clock. |
+| **Domain** | `SupportedCurrency` enum + `CurrencyRate` for UI rows. JSON parsing on the data model (`fromApiJson`), not in the BLoC. |
 | **UI** | Static screens first, then wire data. Zero change = teal, no arrow. 7-day chart, no fake intraday axis. |
-| **Connectivity** | Plugin = banner only. Repos still decide offline via failed request + Hive. Global cubit, dumb screens. |
-| **BLoC** | Real use cases, no mocks. Load vs refresh events. `isRefreshing` fixes Equatable refresh bug. Errors = `AppFailure` end-to-end. |
+| **Connectivity** | Plugin = top strip for no internet. Stale rates = `StaleDataNotice` when `date` ≠ today (not `isCached`). Repos still decide fetch via network + Hive. |
+| **BLoC** | Real use cases, no mocks. Load vs refresh events. Refresh uses `forceRefresh` so cache doesn’t kill the spinner. Errors = `AppFailure` end-to-end. Streams for cache-first load only. |
 
 ---
 
 Commit this file with the code — GitHub renders it and the history stays honest.
+
+---
+
+## Change display refactor (`ChangeIndicator`)
+
+Aug 17 — one param for daily change; widget owns percent, color, arrow.
+
+| # | What I asked | Model output | Decision |
+|---|---|---|---|
+| 1 | Pass one change param to `CurrencyCard`; widget handles the rest. Before coding? | Root cause: `?? 0` getters forced a third `hasChange` flag. Pass `currency.change`; `ChangeIndicator` derives percent from `rate`. | **Accepted** — discuss first, then implement. |
+| 2 | Implement it. Delete `changePercent` and `hasChange`. | Single nullable `change` on domain; percent in UI; removed `Untitled` + `isEgpStronger`. | **Accepted.** |
+| 3 | Product colors: green = EGP stronger, red = weaker. Keep `ChangeIndicator` small. | Colors were inverted at first. Fixed. Then over-named, then trimmed to ~47 lines. | **Edited** twice — colors, then verbosity. |
+| 4 | `null` vs `0`? Red arrow up or down? Fintech norm? | `null` = no yesterday (`—`); `0` = flat. Red + ↑ is normal — arrow follows rate, color follows EGP. | **Accepted** — no further code changes. |
+
+**Shipped:** `change` only on entity/cards; `ChangeIndicator(rate, dailyRateChange)`; green ↓ rate, red ↑ rate.
+
+**Rejected:** whole `CurrencyRate` on card, stored `changePercent`, EGP-direction arrows.
+
+---

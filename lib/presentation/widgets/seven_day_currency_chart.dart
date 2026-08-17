@@ -1,6 +1,5 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
 import 'package:currency_exchange_tracker/core/theme/app_colors.dart';
 
@@ -19,15 +18,9 @@ class SevenDayCurrencyChart extends StatelessWidget {
   const SevenDayCurrencyChart({
     super.key,
     required this.points,
-    this.currencySymbol = '',
-    this.useDayNumbers = false,
   }) : assert(points.length >= 2, 'Chart requires at least 2 daily points.');
 
   final List<CurrencyChartPoint> points;
-  final String currencySymbol;
-
-  /// When true, labels read `Day 1` … `Day 7` instead of `Mon` … `Sun`.
-  final bool useDayNumbers;
 
   static const _weekdayLabels = [
     'Mon',
@@ -91,7 +84,7 @@ class SevenDayCurrencyChart extends StatelessWidget {
                     meta: meta,
                     space: 8,
                     child: Text(
-                      _formatAxisValue(value),
+                      value.toStringAsFixed(2),
                       style: captionStyle,
                       textAlign: TextAlign.right,
                     ),
@@ -130,7 +123,7 @@ class SevenDayCurrencyChart extends StatelessWidget {
                   final label = _labelForIndex(index);
 
                   return LineTooltipItem(
-                    '$label\n${_formatTooltipValue(spot.y)}',
+                    '$label\n${spot.y.toStringAsFixed(2)}',
                     captionStyle!.copyWith(
                       color: Colors.white,
                       fontWeight: FontWeight.w600,
@@ -186,10 +179,6 @@ class SevenDayCurrencyChart extends StatelessWidget {
       return override;
     }
 
-    if (useDayNumbers) {
-      return 'Day ${index + 1}';
-    }
-
     if (index >= 0 && index < _weekdayLabels.length) {
       return _weekdayLabels[index];
     }
@@ -206,28 +195,6 @@ class SevenDayCurrencyChart extends StatelessWidget {
 
   bool _isNearAny(double value, List<double> targets) {
     return targets.any((target) => (value - target).abs() < 0.05);
-  }
-
-  String _formatAxisValue(double value) {
-    if (currencySymbol.isEmpty) {
-      return value.toStringAsFixed(2);
-    }
-
-    return NumberFormat.currency(
-      symbol: currencySymbol,
-      decimalDigits: value >= 100 ? 0 : 2,
-    ).format(value);
-  }
-
-  String _formatTooltipValue(double value) {
-    if (currencySymbol.isEmpty) {
-      return value.toStringAsFixed(2);
-    }
-
-    return NumberFormat.currency(
-      symbol: currencySymbol,
-      decimalDigits: 2,
-    ).format(value);
   }
 
   double _floorToStep(double value, double step) {

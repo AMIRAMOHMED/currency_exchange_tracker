@@ -14,8 +14,7 @@ class CurrencyCard extends StatelessWidget {
     required this.currencyName,
     required this.rate,
     required this.baseCurrency,
-    required this.changeValue,
-    required this.changePercentage,
+    this.change,
     this.onTap,
   });
 
@@ -24,8 +23,7 @@ class CurrencyCard extends StatelessWidget {
   final String currencyName;
   final double rate;
   final String baseCurrency;
-  final double changeValue;
-  final double changePercentage;
+  final double? change;
   final VoidCallback? onTap;
 
   @override
@@ -77,10 +75,7 @@ class CurrencyCard extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: AppSpacing.xs),
-                    ChangeIndicator(
-                      changeValue: changeValue,
-                      changePercentage: changePercentage,
-                    ),
+                    ChangeIndicator(rate: rate, dailyRateChange: change),
                   ],
                 ),
                 const SizedBox(width: AppSpacing.sm),

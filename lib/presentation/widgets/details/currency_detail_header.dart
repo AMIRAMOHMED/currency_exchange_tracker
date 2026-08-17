@@ -13,9 +13,7 @@ class CurrencyDetailHeader extends StatelessWidget {
     required this.currencyCode,
     required this.rate,
     required this.baseCurrency,
-    required this.changeValue,
-    required this.changePercentage,
-    this.onBack,
+    this.change,
   });
 
   final String flagAsset;
@@ -23,9 +21,7 @@ class CurrencyDetailHeader extends StatelessWidget {
   final String currencyCode;
   final double rate;
   final String baseCurrency;
-  final double changeValue;
-  final double changePercentage;
-  final VoidCallback? onBack;
+  final double? change;
 
   @override
   Widget build(BuildContext context) {
@@ -36,7 +32,7 @@ class CurrencyDetailHeader extends StatelessWidget {
         Align(
           alignment: Alignment.centerLeft,
           child: IconButton(
-            onPressed: onBack ?? () => Navigator.maybePop(context),
+            onPressed: () => Navigator.maybePop(context),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
             style: IconButton.styleFrom(
@@ -88,18 +84,11 @@ class CurrencyDetailHeader extends StatelessWidget {
         const SizedBox(height: AppSpacing.sm),
         Row(
           children: [
-            ChangeIndicator(
-              changeValue: changeValue,
-              changePercentage: changePercentage,
-            ),
+            ChangeIndicator(rate: rate, dailyRateChange: change),
             Text(
               ' today',
               style: textTheme.bodySmall?.copyWith(
-                color: changeValue == 0
-                    ? AppColors.primary500
-                    : (changeValue > 0
-                          ? AppColors.positive
-                          : AppColors.negative),
+                color: ChangeIndicator.colorFor(change),
               ),
             ),
           ],

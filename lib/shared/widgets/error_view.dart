@@ -6,14 +6,11 @@ import 'package:currency_exchange_tracker/core/theme/app_colors.dart';
 import 'package:currency_exchange_tracker/core/theme/app_spacing.dart';
 
 class ErrorView extends StatelessWidget {
-  const ErrorView({super.key, required this.error, required this.onRetry});
-
-  factory ErrorView.network({
-    required AppFailure error,
-    required VoidCallback onRetry,
-  }) {
-    return ErrorView(error: error, onRetry: onRetry);
-  }
+  const ErrorView({
+    super.key,
+    required this.error,
+    required this.onRetry,
+  });
 
   final AppFailure error;
   final VoidCallback onRetry;
@@ -22,7 +19,7 @@ class ErrorView extends StatelessWidget {
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     final isNetworkError = error is NetworkFailure;
-    //todo:why we made that on error layer that issue if intrent that pass already no ontrernat connection
+
     final title = isNetworkError
         ? 'No Internet Connection'
         : 'Something went wrong';

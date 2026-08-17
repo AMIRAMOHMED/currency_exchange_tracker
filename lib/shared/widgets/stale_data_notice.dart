@@ -1,21 +1,26 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import 'package:currency_exchange_tracker/core/theme/app_colors.dart';
 import 'package:currency_exchange_tracker/core/theme/app_spacing.dart';
 
-class OfflineStatusBanner extends StatelessWidget {
-  const OfflineStatusBanner({
-    super.key,
-    required this.lastUpdatedLabel,
-    this.onRefresh,
-  });
+class StaleDataNotice extends StatelessWidget {
+  const StaleDataNotice({super.key, required this.date, this.onRefresh});
 
-  final String lastUpdatedLabel;
+  final DateTime date;
   final VoidCallback? onRefresh;
+
+  static bool shouldShow(DateTime date) {
+    final now = DateTime.now();
+    return date.year != now.year ||
+        date.month != now.month ||
+        date.day != now.day;
+  }
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final formattedDate = DateFormat.MMMd().format(date);
 
     return Container(
       width: double.infinity,
@@ -25,7 +30,7 @@ class OfflineStatusBanner extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Icon(
-            Icons.notifications_off_outlined,
+            Icons.schedule_rounded,
             color: AppColors.primary500,
             size: 22,
           ),
@@ -35,29 +40,19 @@ class OfflineStatusBanner extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  "You're offline",
+                  'Rates from $formattedDate',
                   style: textTheme.titleMedium?.copyWith(
                     color: AppColors.primary500,
                   ),
                 ),
                 const SizedBox(height: AppSpacing.xs),
                 Text(
-                  'Showing last updated data',
+                  "These rates aren't from today",
                   style: textTheme.bodySmall?.copyWith(
                     color: AppColors.primary500,
                   ),
                 ),
               ],
-            ),
-          ),
-          const SizedBox(width: AppSpacing.sm),
-          Flexible(
-            child: Text(
-              lastUpdatedLabel,
-              style: textTheme.bodySmall,
-              textAlign: TextAlign.right,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
             ),
           ),
           IconButton(

@@ -2,47 +2,49 @@ import 'package:flutter/material.dart';
 import 'package:currency_exchange_tracker/core/theme/app_colors.dart';
 import 'package:currency_exchange_tracker/core/theme/app_spacing.dart';
 
-/// Widget to display currency change with arrow indicator
 class ChangeIndicator extends StatelessWidget {
-  final double changeValue;
-  final double changePercentage;
-
   const ChangeIndicator({
     super.key,
-    required this.changeValue,
-    required this.changePercentage,
+    required this.rate,
+    required this.dailyRateChange,
   });
 
-  bool get isUnchanged => changeValue == 0;
+  final double rate;
+  final double? dailyRateChange;
 
-  bool get isPositive => changeValue > 0;
-
-  Color get color {
-    if (isUnchanged) return AppColors.primary500;
-    return isPositive ? AppColors.positive : AppColors.negative;
-  }
-
-  IconData? get icon {
-    if (isUnchanged) return null;
-    return isPositive ? Icons.arrow_upward : Icons.arrow_downward;
+  static Color colorFor(double? dailyRateChange) {
+    if (dailyRateChange == null) {
+      return AppColors.textSecondary; // no yesterday data
+    }
+    if (dailyRateChange == 0) return AppColors.primary500; // flat rate
+    return dailyRateChange < 0 ? AppColors.positive : AppColors.negative;
   }
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final arrow = icon;
+    final style = Theme.of(context).textTheme.bodySmall;
+    final change = dailyRateChange;
+
+    if (change == null) return Text('—', style: style);
+
+    final previousRate = rate - change;
+    final percent = previousRate == 0 ? null : change / previousRate * 100;
+    final color = colorFor(change);
+    final label = percent != null
+        ? '${change.abs().toStringAsFixed(2)} (${percent.abs().toStringAsFixed(2)}%)'
+        : change.abs().toStringAsFixed(2);
+    final icon = change == 0
+        ? null
+        : (change > 0 ? Icons.arrow_upward : Icons.arrow_downward);
 
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (arrow != null) ...[
-          Icon(arrow, size: 12, color: color),
+        if (icon != null) ...[
+          Icon(icon, size: 12, color: color),
           const SizedBox(width: AppSpacing.xs),
         ],
-        Text(
-          '${changeValue.abs().toStringAsFixed(2)} (${changePercentage.abs().toStringAsFixed(2)}%)',
-          style: textTheme.bodySmall?.copyWith(color: color),
-        ),
+        Text(label, style: style?.copyWith(color: color)),
       ],
     );
   }

@@ -23,7 +23,7 @@ class SummaryInfoCard extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
 
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+      margin: const EdgeInsets.symmetric(vertical: AppSpacing.md),
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: AppColors.surfaceCard,
       child: Row(

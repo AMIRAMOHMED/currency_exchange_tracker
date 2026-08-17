@@ -7,6 +7,7 @@ sealed class MainScreenEvent extends Equatable {
   List<Object?> get props => [];
 }
 
+/// Initial load — emits [MainLoading] because there is no data yet.
 final class LoadMain extends MainScreenEvent {
   const LoadMain();
 
@@ -14,6 +15,7 @@ final class LoadMain extends MainScreenEvent {
   List<Object?> get props => [];
 }
 
+/// Pull-to-refresh — never emits [MainLoading]; keeps existing data visible.
 final class RefreshMainData extends MainScreenEvent {
   const RefreshMainData();
 

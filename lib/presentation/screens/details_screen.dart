@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
@@ -6,14 +7,12 @@ import 'package:skeletonizer/skeletonizer.dart';
 import 'package:currency_exchange_tracker/core/di/injection.dart';
 import 'package:currency_exchange_tracker/core/theme/app_colors.dart';
 import 'package:currency_exchange_tracker/core/theme/app_spacing.dart';
-import 'package:currency_exchange_tracker/features/currency/domain/entities/currency.dart';
+import 'package:currency_exchange_tracker/features/currency/domain/entities/currency_rate.dart';
 import 'package:currency_exchange_tracker/features/currency/domain/entities/history_point.dart';
 import 'package:currency_exchange_tracker/features/currency/domain/usecases/get_currency_history_usecase.dart';
 import 'package:currency_exchange_tracker/presentation/bloc/details_screen/details_screen_bloc.dart';
-import 'package:currency_exchange_tracker/presentation/utils/currency_presentation.dart';
-import 'package:currency_exchange_tracker/presentation/widgets/details/chart_week_section_header.dart';
 import 'package:currency_exchange_tracker/presentation/widgets/details/currency_detail_header.dart';
-import 'package:currency_exchange_tracker/presentation/widgets/details/offline_status_banner.dart';
+import 'package:currency_exchange_tracker/shared/widgets/stale_data_notice.dart';
 import 'package:currency_exchange_tracker/presentation/widgets/seven_day_currency_chart.dart';
 import 'package:currency_exchange_tracker/shared/widgets/empty_view.dart';
 import 'package:currency_exchange_tracker/shared/widgets/error_view.dart';
@@ -21,7 +20,7 @@ import 'package:currency_exchange_tracker/shared/widgets/error_view.dart';
 class DetailsScreen extends StatelessWidget {
   const DetailsScreen({super.key, required this.currency});
 
-  final Currency currency;
+  final CurrencyRate currency;
 
   @override
   Widget build(BuildContext context) {
@@ -37,13 +36,21 @@ class DetailsScreen extends StatelessWidget {
 class _DetailsView extends StatelessWidget {
   const _DetailsView({required this.currency});
 
-  final Currency currency;
+  final CurrencyRate currency;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(toolbarHeight: 0, elevation: 0, scrolledUnderElevation: 0),
       body: BlocBuilder<DetailsScreenBloc, DetailsState>(
+        buildWhen: (previous, current) {
+          if (previous.runtimeType != current.runtimeType) return true;
+          if (previous is DetailsSuccess && current is DetailsSuccess) {
+            return !listEquals(previous.history, current.history) ||
+                previous.isChartLoading != current.isChartLoading;
+          }
+          return true;
+        },
         builder: (context, state) {
           if (state is DetailsLoading) {
             return _LoadingBody(currency: currency);
@@ -61,6 +68,7 @@ class _DetailsView extends StatelessWidget {
             return _DetailsBody(
               currency: state.currency,
               history: state.history,
+              isChartLoading: state.isChartLoading,
             );
           }
 
@@ -116,7 +124,7 @@ class _Status extends StatelessWidget {
 class _LoadingBody extends StatelessWidget {
   const _LoadingBody({required this.currency});
 
-  final Currency currency;
+  final CurrencyRate currency;
 
   @override
   Widget build(BuildContext context) {
@@ -130,11 +138,10 @@ class _LoadingBody extends StatelessWidget {
           currencyCode: currency.code,
           rate: currency.rate,
           baseCurrency: 'EGP',
-          changeValue: currency.changeValue,
-          changePercentage: currency.changePercentage,
+          change: currency.change,
         ),
         const SizedBox(height: AppSpacing.lg),
-        const ChartWeekSectionHeader(title: 'Past 7 Days'),
+        Text('Past 7 Days', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: AppSpacing.md),
         Skeletonizer.zone(
           child: AspectRatio(
@@ -154,10 +161,15 @@ class _LoadingBody extends StatelessWidget {
 }
 
 class _DetailsBody extends StatelessWidget {
-  const _DetailsBody({required this.currency, required this.history});
+  const _DetailsBody({
+    required this.currency,
+    required this.history,
+    required this.isChartLoading,
+  });
 
-  final Currency currency;
+  final CurrencyRate currency;
   final List<HistoryPoint> history;
+  final bool isChartLoading;
 
   Future<void> _refresh(BuildContext context) async {
     final bloc = context.read<DetailsScreenBloc>();
@@ -170,6 +182,7 @@ class _DetailsBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
+      key: const ValueKey('details_refresh'),
       color: AppColors.primary500,
       onRefresh: () => _refresh(context),
       child: ListView(
@@ -182,31 +195,41 @@ class _DetailsBody extends StatelessWidget {
             currencyCode: currency.code,
             rate: currency.rate,
             baseCurrency: 'EGP',
-            changeValue: currency.changeValue,
-            changePercentage: currency.changePercentage,
+            change: currency.change,
           ),
-          if (currency.isCached) ...[
+          if (StaleDataNotice.shouldShow(currency.date)) ...[
             const SizedBox(height: AppSpacing.lg),
-            OfflineStatusBanner(
-              lastUpdatedLabel:
-                  'Last updated\n${DateFormat.MMMd().format(currency.date)}',
-              onRefresh: () => context.read<DetailsScreenBloc>().add(
-                RefreshDetailsData(currency),
-              ),
+            StaleDataNotice(
+              date: currency.date,
+              onRefresh: () => _refresh(context),
             ),
           ],
           const SizedBox(height: AppSpacing.lg),
-          const ChartWeekSectionHeader(title: 'Past 7 Days'),
+          Text('Past 7 Days', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: AppSpacing.md),
-          SevenDayCurrencyChart(
-            points: [
-              for (final point in history)
-                CurrencyChartPoint(
-                  value: point.rate,
-                  dayLabel: DateFormat('E').format(point.date),
+          if (isChartLoading)
+            Skeletonizer.zone(
+              child: AspectRatio(
+                aspectRatio: 1.6,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Bone.square(),
                 ),
-            ],
-          ),
+              ),
+            )
+          else
+            SevenDayCurrencyChart(
+              points: [
+                for (final point in history)
+                  CurrencyChartPoint(
+                    value: point.rate,
+                    dayLabel: DateFormat('E').format(point.date),
+                  ),
+              ],
+            ),
         ],
       ),
     );

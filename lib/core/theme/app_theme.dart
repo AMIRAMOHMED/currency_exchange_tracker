@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 import 'package:currency_exchange_tracker/core/theme/app_colors.dart';
 import 'package:currency_exchange_tracker/core/theme/app_typography.dart';
 
-/// Main app theme configuration.
 class AppTheme {
   AppTheme._();
 
