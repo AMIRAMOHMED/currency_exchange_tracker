@@ -24,10 +24,7 @@ class DetailsScreenBloc extends Bloc<DetailsScreenEvent, DetailsState> {
   Future<void> _onLoad(LoadDetails event, Emitter<DetailsState> emit) async {
     emit(const DetailsLoading());
     await emit.forEach<Result<List<HistoryPoint>>>(
-      _getHistory(
-        code: event.currency.code,
-        anchorDate: event.currency.date,
-      ),
+      _getHistory(code: event.currency.code, anchorDate: event.currency.date),
       onData: (result) => _mapLoadResult(result, event.currency),
       onError: (error, stackTrace) => const DetailsError(UnknownFailure()),
     );
