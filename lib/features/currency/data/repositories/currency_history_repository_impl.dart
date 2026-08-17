@@ -1,98 +1,155 @@
+import 'package:flutter/foundation.dart';
+import 'package:intl/intl.dart';
+
 import '../../../../core/errors/app_failure.dart';
 import '../../../../core/errors/result.dart';
 import '../../domain/entities/history_point.dart';
 import '../../domain/repositories/currency_history_repository.dart';
-import '../datasources/currency_history_local_data_source.dart';
+import '../datasources/currency_local_data_source.dart';
 import '../datasources/currency_remote_data_source.dart';
-import '../models/currency_history_model.dart';
-import '../models/day_rates_model.dart';
+import '../models/exchange_rate_model.dart';
 
 class CurrencyHistoryRepositoryImpl implements CurrencyHistoryRepository {
-  const CurrencyHistoryRepositoryImpl({
+  CurrencyHistoryRepositoryImpl({
     required CurrencyRemoteDataSource remoteDataSource,
-    required CurrencyHistoryLocalDataSource localDataSource,
+    required CurrencyLocalDataSource localDataSource,
   }) : _remote = remoteDataSource,
        _local = localDataSource;
 
-  static const _historyDays = 7;
-  static const _minHistoryPoints = 5;
-
   final CurrencyRemoteDataSource _remote;
-  final CurrencyHistoryLocalDataSource _local;
+  final CurrencyLocalDataSource _local;
+
+  static const _minPoints = 2;
+  static final _dateFormat = DateFormat('yyyy-MM-dd');
 
   @override
-  Future<Result<List<HistoryPoint>>> getHistory({
+  Stream<Result<List<HistoryPoint>>> getHistory({
     required String code,
-    required DateTime from,
-  }) async {
+    int days = 7,
+    bool forceRefresh = false,
+    DateTime? anchorDate,
+  }) async* {
     final symbol = code.toUpperCase();
-    final start = DateTime(from.year, from.month, from.day);
-    final remote = await _fetchHistory(symbol, start);
-    if (remote is Success<List<HistoryPoint>>) {
-      await _saveHistory(symbol, remote.value);
-      return remote;
-    }
 
-    final cached = await _local.read(symbol);
-    if (cached is Success<CurrencyHistoryModel?> &&
-        cached.value != null &&
-        cached.value!.points.length >= _minHistoryPoints) {
-      return Success(cached.value!.toEntities());
-    }
-    return Failure(
-      cached is Failure<CurrencyHistoryModel?>
-          ? cached.error
-          : (remote as Failure<List<HistoryPoint>>).error,
-    );
-  }
+    final cached = await _readCached(symbol, days);
+    final cachedPoints = _toPoints(cached);
+    final anchor = _anchor(anchorDate, cached);
 
-  Future<Result<List<HistoryPoint>>> _fetchHistory(
-    String code,
-    DateTime start,
-  ) async {
-    final results = await Future.wait([
-      for (var i = 0; i < _historyDays; i++)
-        _remote.getRates(
-          date: DayRatesModel.dateFormat.format(
-            start.subtract(Duration(days: i)),
-          ),
-        ),
-    ]);
-
-    final points = <HistoryPoint>[];
-    AppFailure? offline;
-    for (final result in results) {
-      if (result is Success<DayRatesModel>) {
-        final rate = result.value.rates[code];
-        if (rate != null) {
-          points.add(
-            HistoryPoint(date: DateTime.parse(result.value.date), rate: rate),
-          );
-        }
-      } else if (result is Failure<DayRatesModel> &&
-          (result.error is NetworkFailure || result.error is TimeoutFailure)) {
-        offline = result.error;
+    if (!forceRefresh && cachedPoints.length >= _minPoints) {
+      yield Success(cachedPoints);
+      final missing = anchor != null
+          ? _missingDates(cached, days, anchor)
+          : <String>[];
+      if (missing.isEmpty) {
+        return;
       }
     }
 
-    if (points.length >= _minHistoryPoints) {
-      points.sort((a, b) => a.date.compareTo(b.date));
-      return Success(points);
+    final synced = await _sync(symbol, days, cached, forceRefresh, anchor);
+    switch (synced) {
+      case Success(:final value):
+        if (cachedPoints.length < _minPoints ||
+            !listEquals(cachedPoints, value)) {
+          yield Success(value);
+        }
+      case Failure(:final error):
+        if (cachedPoints.length < _minPoints) yield Failure(error);
     }
-    return Failure(
-      offline ??
-          const ServerFailure(
-            message: 'No history available for this currency',
-          ),
+  }
+
+  Future<List<ExchangeRateModel>> _readCached(String symbol, int days) async {
+    final local = await _local.readHistoryForCurrency(symbol, limit: days);
+    if (local case Success(:final value)) return value;
+    return [];
+  }
+
+  Future<Result<List<HistoryPoint>>> _sync(
+    String symbol,
+    int days,
+    List<ExchangeRateModel> cached,
+    bool forceRefresh,
+    String? anchor,
+  ) async {
+    if (anchor == null) {
+      return const Failure(
+        ServerFailure(message: 'No history available for this currency'),
+      );
+    }
+
+    final missing = forceRefresh
+        ? _dateRange(anchor, days)
+        : _missingDates(cached, days, anchor);
+    if (missing.isEmpty) {
+      return _pointsOrFailure(cached);
+    }
+
+    final remote = await _remote.getRatesForDates(missing, symbol);
+    switch (remote) {
+      case Failure(:final error):
+        return cached.length >= _minPoints
+            ? Success(_toPoints(cached))
+            : Failure(error);
+      case Success(:final value):
+        if (value.isEmpty && cached.length < _minPoints) {
+          return const Failure(
+            ServerFailure(message: 'No history available for this currency'),
+          );
+        }
+
+        if (value.isNotEmpty) {
+          await _local.writeRates(value);
+        }
+        final afterCache = await _readCached(symbol, days);
+        return _pointsOrFailure(afterCache);
+    }
+  }
+
+  String? _anchor(DateTime? fromList, List<ExchangeRateModel> cached) {
+    if (fromList != null) return _dateFormat.format(fromList);
+    return cached.firstOrNull?.date;
+  }
+
+  Result<List<HistoryPoint>> _pointsOrFailure(List<ExchangeRateModel> models) {
+    final points = _toPoints(models);
+    if (points.length < _minPoints) {
+      return const Failure(
+        ServerFailure(message: 'No history available for this currency'),
+      );
+    }
+    return Success(points);
+  }
+
+  List<String> _dateRange(String anchor, int days) {
+    final start = DateTime.parse(anchor);
+    return List.generate(
+      days,
+      (index) => _dateFormat.format(start.subtract(Duration(days: index))),
     );
   }
 
-  Future<void> _saveHistory(String code, List<HistoryPoint> points) async {
-    final fresh = CurrencyHistoryModel.fromPoints(code: code, points: points);
-    final existing = await _local.read(code);
-    if (existing is Success<CurrencyHistoryModel?> && existing.value == fresh) {
-      return;
-    }
-    await _local.write(fresh);
+  List<String> _missingDates(
+    List<ExchangeRateModel> cached,
+    int days,
+    String anchor,
+  ) {
+    final known = cached.map((model) => model.date).toSet();
+    return _dateRange(
+      anchor,
+      days,
+    ).where((date) => !known.contains(date)).toList();
+  }
+
+  List<HistoryPoint> _toPoints(List<ExchangeRateModel> models) {
+    final points =
+        models
+            .map(
+              (model) => HistoryPoint(
+                date: DateTime.parse(model.date),
+                rate: model.rate,
+              ),
+            )
+            .toList()
+          ..sort((a, b) => a.date.compareTo(b.date));
+    return points;
   }
 }

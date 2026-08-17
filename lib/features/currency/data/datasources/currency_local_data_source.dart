@@ -1,54 +1,99 @@
 import 'dart:async';
 
 import 'package:hive_ce/hive.dart';
+import 'package:intl/intl.dart';
 
 import '../../../../core/errors/app_failure.dart';
 import '../../../../core/errors/result.dart';
-import '../models/day_rates_model.dart';
+import '../models/exchange_rate_model.dart';
 
-/// `Success(null)` = empty. [CacheFailure] = Hive threw.
 abstract interface class CurrencyLocalDataSource {
-  Future<Result<DayRatesModel?>> read(String date);
-  Future<Result<DayRatesModel?>> readLatest();
-  Future<Result<void>> write(DayRatesModel model);
+  Future<Result<List<ExchangeRateModel>>> readLatestForCurrencies(
+    List<String> currencies, {
+    required String today,
+    required String yesterday,
+  });
+
+  Future<Result<List<ExchangeRateModel>>> readHistoryForCurrency(
+    String currency, {
+    required int limit,
+  });
+
+  Future<Result<void>> writeRates(List<ExchangeRateModel> models);
 }
 
 class CurrencyLocalDataSourceImpl implements CurrencyLocalDataSource {
   const CurrencyLocalDataSourceImpl(this._rates);
 
   static const String boxName = 'rates';
-  static const int _keepDays = 14;
+  static const int keepDays = 30;
 
-  final Box<DayRatesModel> _rates;
-
-  @override
-  Future<Result<DayRatesModel?>> read(String date) =>
-      _try(() => _rates.get(date), 'read $date');
+  final Box<ExchangeRateModel> _rates;
 
   @override
-  Future<Result<DayRatesModel?>> readLatest() => _try(() {
-    final keys = _rates.keys.cast<String>().toList()..sort();
-    return keys.isEmpty ? null : _rates.get(keys.last);
-  }, 'read latest');
+  Future<Result<List<ExchangeRateModel>>> readLatestForCurrencies(
+    List<String> currencies, {
+    required String today,
+    required String yesterday,
+  }) {
+    return _guard(() {
+      final result = <ExchangeRateModel>[];
+      for (final currency in currencies.map((c) => c.toUpperCase()).toSet()) {
+        final todayRate = _rates.get('${today}_$currency');
+        if (todayRate != null) result.add(todayRate);
+
+        final yesterdayRate = _rates.get('${yesterday}_$currency');
+        if (yesterdayRate != null) result.add(yesterdayRate);
+      }
+      return result;
+    });
+  }
 
   @override
-  Future<Result<void>> write(DayRatesModel model) => _try(() async {
-    await _rates.put(model.date, model);
-    final keys = _rates.keys.cast<String>().toList()..sort();
-    if (keys.length > _keepDays) {
-      await _rates.deleteAll(keys.take(keys.length - _keepDays));
+  Future<Result<List<ExchangeRateModel>>> readHistoryForCurrency(
+    String currency, {
+    required int limit,
+  }) {
+    return _guard(() {
+      final target = currency.toUpperCase();
+      final history =
+          _rates.values.where((rate) => rate.currency == target).toList()
+            ..sort((a, b) => b.date.compareTo(a.date));
+      return history.take(limit).toList();
+    });
+  }
+
+  @override
+  Future<Result<void>> writeRates(List<ExchangeRateModel> models) {
+    return _guard(() async {
+      await _rates.putAll({
+        for (final model in models) '${model.date}_${model.currency}': model,
+      });
+      await _pruneOldEntries();
+    });
+  }
+
+  Future<void> _pruneOldEntries() async {
+    final cutoff = DateFormat(
+      'yyyy-MM-dd',
+    ).format(DateTime.now().subtract(const Duration(days: keepDays)));
+
+    final staleKeys = _rates.keys.where((key) {
+      final date = key.toString().split('_').first;
+      return date.compareTo(cutoff) < 0;
+    }).toList();
+
+    if (staleKeys.isNotEmpty) {
+      await _rates.deleteAll(staleKeys);
     }
-  }, 'write ${model.date}');
+  }
 
-  Future<Result<T>> _try<T>(
-    FutureOr<T> Function() action,
-    String description,
-  ) async {
+  Future<Result<T>> _guard<T>(FutureOr<T> Function() action) async {
     try {
-      return Success<T>(await action());
+      return Success(await action());
     } catch (error) {
-      return Failure<T>(
-        CacheFailure(message: 'Failed to $description', cause: error),
+      return Failure(
+        CacheFailure(message: 'Local rates storage failed', cause: error),
       );
     }
   }

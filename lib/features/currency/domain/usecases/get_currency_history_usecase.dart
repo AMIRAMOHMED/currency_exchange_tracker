@@ -7,10 +7,17 @@ class GetCurrencyHistoryUseCase {
 
   final CurrencyHistoryRepository _repository;
 
-  Future<Result<List<HistoryPoint>>> call({
+  Stream<Result<List<HistoryPoint>>> call({
     required String code,
-    required DateTime from,
+    int days = 7,
+    bool forceRefresh = false,
+    DateTime? anchorDate,
   }) {
-    return _repository.getHistory(code: code, from: from);
+    return _repository.getHistory(
+      code: code,
+      days: days,
+      forceRefresh: forceRefresh,
+      anchorDate: anchorDate,
+    );
   }
 }

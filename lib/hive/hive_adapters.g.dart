@@ -6,67 +6,36 @@ part of 'hive_adapters.dart';
 // AdaptersGenerator
 // **************************************************************************
 
-class DayRatesModelAdapter extends TypeAdapter<DayRatesModel> {
+class ExchangeRateModelAdapter extends TypeAdapter<ExchangeRateModel> {
   @override
-  final typeId = 1;
+  final typeId = 3;
 
   @override
-  DayRatesModel read(BinaryReader reader) {
+  ExchangeRateModel read(BinaryReader reader) {
     final numOfFields = reader.readByte();
     final fields = <int, dynamic>{
       for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
-    return DayRatesModel(
+    return ExchangeRateModel(
       date: fields[0] as String,
-      rates: (fields[1] as Map).cast<String, double>(),
+      currency: fields[1] as String,
+      rate: (fields[2] as num).toDouble(),
+      updatedAt: (fields[3] as num).toInt(),
     );
   }
 
   @override
-  void write(BinaryWriter writer, DayRatesModel obj) {
+  void write(BinaryWriter writer, ExchangeRateModel obj) {
     writer
-      ..writeByte(2)
+      ..writeByte(4)
       ..writeByte(0)
       ..write(obj.date)
       ..writeByte(1)
-      ..write(obj.rates);
-  }
-
-  @override
-  int get hashCode => typeId.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is DayRatesModelAdapter &&
-          runtimeType == other.runtimeType &&
-          typeId == other.typeId;
-}
-
-class CurrencyHistoryModelAdapter extends TypeAdapter<CurrencyHistoryModel> {
-  @override
-  final typeId = 2;
-
-  @override
-  CurrencyHistoryModel read(BinaryReader reader) {
-    final numOfFields = reader.readByte();
-    final fields = <int, dynamic>{
-      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
-    };
-    return CurrencyHistoryModel(
-      code: fields[0] as String,
-      points: (fields[1] as Map).cast<String, double>(),
-    );
-  }
-
-  @override
-  void write(BinaryWriter writer, CurrencyHistoryModel obj) {
-    writer
+      ..write(obj.currency)
       ..writeByte(2)
-      ..writeByte(0)
-      ..write(obj.code)
-      ..writeByte(1)
-      ..write(obj.points);
+      ..write(obj.rate)
+      ..writeByte(3)
+      ..write(obj.updatedAt);
   }
 
   @override
@@ -75,7 +44,7 @@ class CurrencyHistoryModelAdapter extends TypeAdapter<CurrencyHistoryModel> {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is CurrencyHistoryModelAdapter &&
+      other is ExchangeRateModelAdapter &&
           runtimeType == other.runtimeType &&
           typeId == other.typeId;
 }

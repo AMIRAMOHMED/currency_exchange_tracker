@@ -2,8 +2,11 @@ import '../../../../core/errors/result.dart';
 import '../entities/history_point.dart';
 
 abstract interface class CurrencyHistoryRepository {
-  Future<Result<List<HistoryPoint>>> getHistory({
+  /// Load: cache first, then network. Pull: network only.
+  Stream<Result<List<HistoryPoint>>> getHistory({
     required String code,
-    required DateTime from,
+    int days = 7,
+    bool forceRefresh = false,
+    DateTime? anchorDate,
   });
 }

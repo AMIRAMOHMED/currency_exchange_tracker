@@ -1,12 +1,17 @@
+import 'package:flutter/foundation.dart';
+import 'package:intl/intl.dart';
+
+import '../../../../core/errors/app_failure.dart';
 import '../../../../core/errors/result.dart';
-import '../../domain/entities/day_rates.dart';
+import '../../domain/entities/currency_rate.dart';
 import '../../domain/repositories/currency_repository.dart';
+import '../../domain/supported_currency.dart';
 import '../datasources/currency_local_data_source.dart';
 import '../datasources/currency_remote_data_source.dart';
-import '../models/day_rates_model.dart';
+import '../models/exchange_rate_model.dart';
 
 class CurrencyRepositoryImpl implements CurrencyRepository {
-  const CurrencyRepositoryImpl({
+  CurrencyRepositoryImpl({
     required CurrencyRemoteDataSource remoteDataSource,
     required CurrencyLocalDataSource localDataSource,
   }) : _remote = remoteDataSource,
@@ -15,45 +20,104 @@ class CurrencyRepositoryImpl implements CurrencyRepository {
   final CurrencyRemoteDataSource _remote;
   final CurrencyLocalDataSource _local;
 
-  @override
-  Future<Result<DayRates>> getLatest() async {
-    final remote = await _remote.getRates();
-    if (remote is Success<DayRatesModel>) {
-      await _save(remote.value);
-      return Success(remote.value.toEntity(isCached: false));
-    }
+  static final _dateFormat = DateFormat('yyyy-MM-dd');
+  static final _currencyCodes = SupportedCurrency.values
+      .map((currency) => currency.code)
+      .toList();
 
-    final cached = await _local.readLatest();
-    if (cached is Success<DayRatesModel?> && cached.value != null) {
-      return Success(cached.value!.toEntity(isCached: true));
-    }
-    return Failure(
-      cached is Failure<DayRatesModel?>
-          ? cached.error
-          : (remote as Failure<DayRatesModel>).error,
+  ({String date, List<CurrencyRate> rates, bool fresh})? _memory;
+
+  @override
+  Stream<Result<List<CurrencyRate>>> getHomeRates({
+    bool forceRefresh = false,
+  }) async* {
+    final today = _dateFormat.format(DateTime.now());
+    final yesterday = _dateFormat.format(
+      DateTime.now().subtract(const Duration(days: 1)),
     );
-  }
 
-  @override
-  Future<Result<DayRates>> getByDate(DateTime date) async {
-    final key = DayRatesModel.dateFormat.format(date);
+    // Always load cache so we can compare it with internet data later
+    final memoryCached = _cachedRates(today);
+    final cached = memoryCached ?? await _diskRates(today, yesterday);
 
-    final cached = await _local.read(key);
-    if (cached is Success<DayRatesModel?> && cached.value != null) {
-      return Success(cached.value!.toEntity(isCached: true));
+    if (!forceRefresh && cached != null) {
+      yield Success(cached);
+      if (_memory?.fresh == true) return;
     }
 
-    final remote = await _remote.getRates(date: key);
-    if (remote is Success<DayRatesModel>) {
-      await _local.write(remote.value);
-      return Success(remote.value.toEntity(isCached: false));
+    final remote = await _remote.getHomeRates();
+    switch (remote) {
+      case Failure(:final error):
+        if (cached == null) yield Failure(error);
+      case Success(:final value) when value.isEmpty:
+        if (cached == null) {
+          yield const Failure(
+            UnknownFailure(message: 'No data returned from API'),
+          );
+        }
+      case Success(:final value):
+        await _local.writeRates(value);
+        final rates = _toRates(value);
+        _memory = (date: today, rates: rates, fresh: true);
+
+        if (cached == null || !listEquals(cached, rates)) {
+          yield Success(rates);
+        }
     }
-    return Failure((remote as Failure<DayRatesModel>).error);
   }
 
-  Future<void> _save(DayRatesModel fresh) async {
-    final existing = await _local.read(fresh.date);
-    if (existing is Success<DayRatesModel?> && existing.value == fresh) return;
-    await _local.write(fresh);
+  List<CurrencyRate>? _cachedRates(String today) {
+    final cache = _memory;
+    if (cache == null || cache.date != today || cache.rates.isEmpty) {
+      return null;
+    }
+    return cache.rates;
+  }
+
+  Future<List<CurrencyRate>?> _diskRates(String today, String yesterday) async {
+    final local = await _local.readLatestForCurrencies(
+      _currencyCodes,
+      today: today,
+      yesterday: yesterday,
+    );
+    if (local case Success(:final value) when value.isNotEmpty) {
+      final rates = _toRates(value);
+      if (rates.isEmpty) return null;
+
+      _memory = (date: today, rates: rates, fresh: false);
+      return rates;
+    }
+    return null;
+  }
+
+  List<CurrencyRate> _toRates(List<ExchangeRateModel> models) {
+    final byCurrency = <String, List<ExchangeRateModel>>{};
+    for (final model in models) {
+      (byCurrency[model.currency] ??= []).add(model);
+    }
+
+    final rates = <CurrencyRate>[];
+    for (final currency in SupportedCurrency.values) {
+      final entries = byCurrency[currency.code];
+      if (entries == null || entries.isEmpty) continue;
+
+      entries.sort((a, b) => a.date.compareTo(b.date));
+      final latest = entries.last;
+      final previous = entries.length > 1 ? entries[entries.length - 2] : null;
+      final change = previous == null || previous.rate == 0
+          ? null
+          : latest.rate - previous.rate;
+
+      rates.add(
+        CurrencyRate(
+          code: currency.code,
+          name: currency.name,
+          rate: latest.rate,
+          change: change,
+          date: DateTime.parse(latest.date),
+        ),
+      );
+    }
+    return rates;
   }
 }

@@ -7,14 +7,12 @@ import 'package:currency_exchange_tracker/hive/hive_adapters.dart';
 
 extension HiveRegistrar on HiveInterface {
   void registerAdapters() {
-    registerAdapter(DayRatesModelAdapter());
-    registerAdapter(CurrencyHistoryModelAdapter());
+    registerAdapter(ExchangeRateModelAdapter());
   }
 }
 
 extension IsolatedHiveRegistrar on IsolatedHiveInterface {
   void registerAdapters() {
-    registerAdapter(DayRatesModelAdapter());
-    registerAdapter(CurrencyHistoryModelAdapter());
+    registerAdapter(ExchangeRateModelAdapter());
   }
 }

@@ -1,8 +1,7 @@
 import '../../../../core/errors/result.dart';
-import '../entities/day_rates.dart';
+import '../entities/currency_rate.dart';
 
 abstract interface class CurrencyRepository {
-  Future<Result<DayRates>> getLatest();
-
-  Future<Result<DayRates>> getByDate(DateTime date);
+  /// Load: cache first, then network. Pull: network only.
+  Stream<Result<List<CurrencyRate>>> getHomeRates({bool forceRefresh = false});
 }
