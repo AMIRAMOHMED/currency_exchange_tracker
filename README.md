@@ -82,8 +82,6 @@ core/           dio, errors, theme, DI, connectivity
 - **Chart** — opened on tap → show cached days first → fetch only missing dates for that currency
 - **Offline** — repos fall back to Hive; UI shows banner + stale notice where needed
 
-<img src="https://github.com/user-attachments/assets/b10a2d70-36c1-4c1d-9107-40e6d45a3b79" width="700" alt="Architecture diagram" />
-
 ---
 
 ## Getting started
