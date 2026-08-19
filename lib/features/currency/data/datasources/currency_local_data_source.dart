@@ -9,10 +9,8 @@ import '../models/exchange_rate_model.dart';
 
 abstract interface class CurrencyLocalDataSource {
   Future<Result<List<ExchangeRateModel>>> readLatestForCurrencies(
-    List<String> currencies, {
-    required String today,
-    required String yesterday,
-  });
+    List<String> currencies,
+  );
 
   Future<Result<List<ExchangeRateModel>>> readHistoryForCurrency(
     String currency, {
@@ -27,23 +25,18 @@ class CurrencyLocalDataSourceImpl implements CurrencyLocalDataSource {
 
   static const String boxName = 'rates';
   static const int keepDays = 30;
+  static final _dateFormat = DateFormat('yyyy-MM-dd');
 
   final Box<ExchangeRateModel> _rates;
 
   @override
   Future<Result<List<ExchangeRateModel>>> readLatestForCurrencies(
-    List<String> currencies, {
-    required String today,
-    required String yesterday,
-  }) {
+    List<String> currencies,
+  ) {
     return _guard(() {
       final result = <ExchangeRateModel>[];
       for (final currency in currencies.map((c) => c.toUpperCase()).toSet()) {
-        final todayRate = _rates.get('${today}_$currency');
-        if (todayRate != null) result.add(todayRate);
-
-        final yesterdayRate = _rates.get('${yesterday}_$currency');
-        if (yesterdayRate != null) result.add(yesterdayRate);
+        result.addAll(_newestRows(currency, limit: 2));
       }
       return result;
     });
@@ -54,29 +47,31 @@ class CurrencyLocalDataSourceImpl implements CurrencyLocalDataSource {
     String currency, {
     required int limit,
   }) {
-    return _guard(() {
-      final target = currency.toUpperCase();
-      final history =
-          _rates.values.where((rate) => rate.currency == target).toList()
-            ..sort((a, b) => b.date.compareTo(a.date));
-      return history.take(limit).toList();
-    });
+    return _guard(() => _newestRows(currency, limit: limit));
+  }
+
+  List<ExchangeRateModel> _newestRows(String currency, {required int limit}) {
+    final target = currency.toUpperCase();
+    final history =
+        _rates.values.where((rate) => rate.currency == target).toList()
+          ..sort((a, b) => b.date.compareTo(a.date));
+    return history.take(limit).toList();
   }
 
   @override
   Future<Result<void>> writeRates(List<ExchangeRateModel> models) {
     return _guard(() async {
       await _rates.putAll({
-        for (final model in models) '${model.date}_${model.currency}': model,
+        for (final model in models) _key(model.date, model.currency): model,
       });
       await _pruneOldEntries();
     });
   }
 
   Future<void> _pruneOldEntries() async {
-    final cutoff = DateFormat(
-      'yyyy-MM-dd',
-    ).format(DateTime.now().subtract(const Duration(days: keepDays)));
+    final cutoff = _dateFormat.format(
+      DateTime.now().subtract(const Duration(days: keepDays)),
+    );
 
     final staleKeys = _rates.keys.where((key) {
       final date = key.toString().split('_').first;
@@ -87,6 +82,8 @@ class CurrencyLocalDataSourceImpl implements CurrencyLocalDataSource {
       await _rates.deleteAll(staleKeys);
     }
   }
+
+  static String _key(String date, String currency) => '${date}_$currency';
 
   Future<Result<T>> _guard<T>(FutureOr<T> Function() action) async {
     try {

@@ -185,3 +185,87 @@ Aug 17 — one param for daily change; widget owns percent, color, arrow.
 **Rejected:** whole `CurrencyRate` on card, stored `changePercent`, EGP-direction arrows.
 
 ---
+
+
+First suite. Official Dart / Flutter / `bloc_test` / `mocktail` docs only. Behavior, not private methods.
+
+| # | What I asked | Model output | Decision |
+|---|---|---|---|
+| 1 | Write tests from current docs. Blocs first, then repos. Mock boundaries only. Cover load/refresh, empty refresh, chart loading, cache vs remote. | `bloc_test` + mocktail suite under `test/presentation/bloc/` and `test/features/currency/data/`. | **Accepted** structure. Asked it to re-run everything. |
+| 2 | Invent cases that *should* fail if the app is wrong — then fix the app the simple way and test those. | Mapped real bugs (spinner stuck, empty refresh wiping the list, duplicate Success) to tests, then patched production. | **Edited.** Kept the cases. Cut extra test helpers. |
+| 3 | What does `seed: () => previous` mean in `bloc_test`, and why do some tests have it? | `seed` = start the bloc already in Success so refresh can run. Load tests start from the real initial state, so they don't need it. | **Accepted** for learning. No code change. |
+| 4 | Rename the fixtures file. | Renamed to a name that matches the rest of `test/`. | **Accepted.** |
+
+**What I pushed back on:** a heavy test framework, testing private methods, goldens.
+
+---
+
+
+UX problem: pull-to-refresh hits the API, the API is still yesterday's file, the stale banner stays, so people pull again.
+
+| # | What I asked | Model output | Decision |
+|---|---|---|---|
+| 1 | Senior UX + architecture: user refreshes, still sees old-date rates, refreshes again. Fix it wisely. | Options: dialog, banner copy, snackbar + cooldown + “checked at”. | **Picked** snackbar + 2 min cooldown + timestamp. Not a blocking dialog. |
+| 2 | Same idea, simpler, human-written. Don't invent a new layer. | First pass added an enum and extra types. | **Rejected** the extra enum. Cooldown lives on the bloc (`_lastRefreshAt`). One `RefreshSnackListener` reused on both screens. |
+| 3 | Where should debounce live on mobile — Dio? Dart? Search it. Don't implement yet. | Articles: skip the *action* in the UI/bloc, not the HTTP client. Dio interceptors are for HTTP, not “user pulled too soon.” | **Accepted.** 2 min gate in the bloc. No Dio interceptor. |
+| 4 | One listener widget or two? Stateless? Think first. | One generic `BlocListener` wrapping both screens. Widgets stay stateless. | **Accepted.** |
+| 5 | On a real successful refresh, snackbar too? | Yes — “Rates updated”, or “latest rates are from {date}” if the file isn't today. | **Accepted.** |
+| 6 | Why extend / mixin / `StateStreamable`? Read 2026 bloc docs. | Mixin `HasRefreshSnack` so one listener works for both states. `BlocBase` is enough; `StateStreamable` was extra. | **Edited.** Kept a tiny mixin. Dropped the heavier type. |
+| 7 | Snackbar never shows. Device logs attached. | `listenWhen` / Equatable: snack didn't look “new,” so the listener skipped it. Timestamp on the snack record so each refresh is a new value. | **Accepted** the bugfix. |
+| 8 | Offline still shows “Rates updated” / “Already up to date”. Bug. Details too. | Refresh was treating a cache/error path as success. Failure → “Couldn't refresh — check your connection.” Cooldown only after a real network success. | **Accepted.** Same snack path on home and details. |
+
+**Shipped:** `RefreshSnackListener`, 2 min cooldown in both blocs, themed snack (check vs wifi-off), `lastCheckedAt` on success for “Checked at …”.
+
+**Rejected:** refresh enum, Dio debounce, two copy-pasted listeners, showing “updated” when the call never reached the network.
+
+---
+
+
+I wrote the model a team-lead prompt: read data + repo + bloc + screens, then simplify. Same cases. Human-looking code.
+
+| # | What I asked | Model output | Decision |
+|---|---|---|---|
+| 1 | Write me that prompt, then run it. Not only the git diff — whole remote + local stack. | Cleanup pass: names, duplicated snack mapping, dead branches. Behavior supposed to stay. | **Edited.** Kept simplifications that tests still covered. Reverted anything that grew the surface. |
+| 2 | How does home fetch locally — latest, then subtract a day? | Yes: cache/API `latest` date, then the day before that. Not the phone clock. | **Accepted** as explanation. Matches the midnight fix earlier. |
+| 3 | `/gstack-design-review` — which UX cases do we handle, what's missing? | Stale banner, no-internet strip, refresh snacks, chart loading. Gap was “refreshed but still yesterday” — already the snack work. | **Accepted** the review. No extra screens. |
+| 4 | Should `StaleDataNotice` also show when offline? Don't edit. How to check with no new parameter? | Yes — it's about the *rate date*, not connectivity. `date != today` is enough. Top strip already owns “no internet.” | **Accepted.** Still one date check. |
+| 5 | Drop `checkedAt:` and read it from the cubit so the screen doesn't hold `lastCheckedAt`? | Screen still needs the value from state. Bloc already has it. Passing `state.lastCheckedAt` into the widget is the simple version. | **Accepted.** Didn't hide it behind a new lookup. |
+| 6 | Details screen is much longer than home. Simplify. | Split body/status widgets; same states as home. | **Edited.** Shorter, but details still owns header + chart + stale notice. |
+
+---
+
+
+| # | What I asked | Model output | Decision |
+|---|---|---|---|
+| 1 | Review changes and performance. Add a BlocObserver to see rebuilds with the *same* data. | Observer + temporary debug prints. Found: duplicate `Loading` emit, Success→Success with the same list still rebuilding. | **Accepted** the diagnosis. Debug prints were temporary. |
+| 2 | After reproduce: what actually shipped (ignore debug)? | Skip `emit(Loading)` if already loading. `buildWhen` on home: don't rebuild if the currency list didn't change. | **Accepted.** List stays put while snack/`isRefreshing` flip. |
+| 3 | Skipping Loading looks the same to me. Where does the second Loading come from? | First emit is mine; a second `LoadMain` (rebuild/provider) would emit Loading again and flash the shimmer. Guard = no-op if already `MainLoading`. | **Accepted** once I understood it. Same guard on details. |
+| 4 | Screen `buildWhen` vs Equatable — I thought Equatable means the screen shouldn't check. Search 2026 bloc docs. Don't implement extra ideas yet. | Equatable stops *identical* states. Snack + `isRefreshing` make Success ≠ Success, so the list would still rebuild without `buildWhen`. Docs: `buildWhen` is for “rebuild the list or not.” | **Accepted.** Keep Equatable on state, `buildWhen` on the list. |
+| 5 | Why is `lastCheckedAt` on the bloc — read Hive instead? Use it for debounce? Think, don't implement. | Debounce is “when did *this user* last pull,” not “when was the box written.” Hive date is the rate file. Keep `_lastRefreshAt` in memory. | **Accepted.** Left as-is. |
+| 6 | Review the observer. Human-written or over-engineered? Then fix it. | First version compared “visible data” by hand (`_sameVisibleData`). That's the blocs' job. | **Edited.** Now debug-only: `debugPrint` the transition + errors. Wired in `main.dart` under `kDebugMode`. |
+
+**Rejected:** keeping the fat observer after we already skip same-list rebuilds in `buildWhen`.
+
+---
+
+
+| # | What I asked | Model output | Decision |
+|---|---|---|---|
+| 1 | `StaleDataNotice` is used on both screens. Walk the steps — what's inside the widget vs outside? I think the show-logic is duplicated. | Outside: decide whether to insert it. Inside: clock icon + copy. Both screens copied the date≠today check. | **Accepted** the split. |
+| 2 | Implement, same logic, no extra repeats. Read the data shape. | First refactor pulled refresh-bar concerns into the notice. | **Rejected / reverted.** Too clever, and it touched the refresh snack for no reason. |
+| 3 | Simpler: `StaleDataNotice.shouldShow(currencies.first.date)` and delete the other checks. | Static `shouldShow(date)` — year/month/day vs now. Both screens call that, then build the widget. | **Accepted.** One rule, two call sites. |
+
+**Shipped:** `shouldShow` on the widget; screens only pass `date` + optional `checkedAt`.
+
+---
+
+
+| # | What I asked | Model output | Decision |
+|---|---|---|---|
+| 1 | Verify all tests pass. | Ran the suite after the refresh / observer / stale-notice work. | **Accepted** if green; fixed anything the simplify pass broke. |
+| 2 | Update this log from every chat yesterday + today. Search how people write AI usage logs. Human, brief, enough for a reviewer. | Looked up assignment-style logs (prompt → output → keep/edit/reject + why). Appended these sessions in the same table format. | **Edited** — this section. Skipped “run tests again,” log pastes, and push-only chats. |
+
+How I treated the model this week: I used it to draft, then I cut types, revert over-builds, and keep product rules (date ≠ clock, snack ≠ success when offline, observer is debug only).
+
+---
+

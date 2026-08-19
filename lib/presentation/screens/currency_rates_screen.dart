@@ -14,6 +14,7 @@ import 'package:currency_exchange_tracker/shared/widgets/app_skeletonizer.dart';
 import 'package:currency_exchange_tracker/shared/widgets/currency_card.dart';
 import 'package:currency_exchange_tracker/shared/widgets/empty_view.dart';
 import 'package:currency_exchange_tracker/shared/widgets/error_view.dart';
+import 'package:currency_exchange_tracker/presentation/widgets/refresh_snack_listener.dart';
 import 'package:currency_exchange_tracker/shared/widgets/stale_data_notice.dart';
 import 'package:currency_exchange_tracker/shared/widgets/summary_info_card.dart';
 
@@ -35,41 +36,43 @@ class _CurrencyRatesView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(toolbarHeight: 0, elevation: 0, scrolledUnderElevation: 0),
-      body: BlocBuilder<MainScreenBloc, MainState>(
-        buildWhen: (previous, current) {
-          if (previous.runtimeType != current.runtimeType) return true;
-          if (previous is MainSuccess && current is MainSuccess) {
-            return !listEquals(previous.currencies, current.currencies);
-          }
-          return true;
-        },
-        builder: (context, state) {
-          if (state is MainError) {
-            return ErrorView(
-              error: state.error,
+    return RefreshSnackListener<MainScreenBloc, MainState>(
+      child: Scaffold(
+        appBar: AppBar(
+          automaticallyImplyLeading: false,
+          toolbarHeight: 0,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+        ),
+        body: BlocBuilder<MainScreenBloc, MainState>(
+          buildWhen: (previous, current) => switch ((previous, current)) {
+            (MainLoading(), MainLoading()) => false,
+            (
+              MainSuccess(currencies: final p),
+              MainSuccess(currencies: final c),
+            ) =>
+              !listEquals(p, c),
+            _ => previous != current,
+          },
+          builder: (context, state) => switch (state) {
+            MainError(:final error) => ErrorView(
+              error: error,
               onRetry: () =>
                   context.read<MainScreenBloc>().add(const LoadMain()),
-            );
-          }
-
-          if (state is MainSuccess && state.currencies.isEmpty) {
-            return const EmptyView(
+            ),
+            MainSuccess(currencies: final c) when c.isEmpty => const EmptyView(
               subtitle: 'No currency rates are available right now.',
-            );
-          }
-
-          final isLoading = state is MainLoading;
-          final currencies = state is MainSuccess
-              ? state.currencies
-              : skeletonCurrencies;
-
-          return AppSkeletonizer(
-            enabled: isLoading,
-            child: _RatesList(currencies: currencies),
-          );
-        },
+            ),
+            MainSuccess(:final currencies) => AppSkeletonizer(
+              enabled: false,
+              child: _RatesList(currencies: currencies),
+            ),
+            MainLoading() => AppSkeletonizer(
+              enabled: true,
+              child: _RatesList(currencies: skeletonCurrencies),
+            ),
+          },
+        ),
       ),
     );
   }
@@ -83,7 +86,10 @@ class _RatesList extends StatelessWidget {
   Future<void> _refresh(BuildContext context) async {
     final bloc = context.read<MainScreenBloc>();
     bloc.add(const RefreshMainData());
-    await bloc.stream.firstWhere((s) => s is! MainSuccess || !s.isRefreshing);
+    await bloc.stream.firstWhere(
+      (s) => s is! MainSuccess || !s.isRefreshing,
+      orElse: () => bloc.state,
+    );
   }
 
   @override
@@ -113,7 +119,9 @@ class _RatesList extends StatelessWidget {
               StaleDataNotice.shouldShow(currencies.first.date)) ...[
             StaleDataNotice(
               date: currencies.first.date,
-              onRefresh: () => _refresh(context),
+              checkedAt: context.select(
+                (MainScreenBloc bloc) => bloc.state.lastCheckedAt,
+              ),
             ),
             const SizedBox(height: AppSpacing.md),
           ],

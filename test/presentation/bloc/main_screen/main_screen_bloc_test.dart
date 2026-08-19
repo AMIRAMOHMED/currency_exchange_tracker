@@ -22,8 +22,23 @@ void main() {
 
   group('LoadMain', () {
     blocTest<MainScreenBloc, MainState>(
-      'should emit [MainLoading, MainSuccess] when use case emits Success',
+      'should emit MainSuccess without re-emitting the initial MainLoading',
       build: buildBloc,
+      act: (bloc) => bloc.add(const LoadMain()),
+      setUp: () {
+        when(() => mockGetCurrencies()).thenAnswer(
+          (_) => Stream.value(Success(sampleCurrencies())),
+        );
+      },
+      expect: () => [
+        MainSuccess(sampleCurrencies()),
+      ],
+    );
+
+    blocTest<MainScreenBloc, MainState>(
+      'should emit MainLoading then MainSuccess when retrying from error',
+      build: buildBloc,
+      seed: () => const MainError(NetworkFailure()),
       act: (bloc) => bloc.add(const LoadMain()),
       setUp: () {
         when(() => mockGetCurrencies()).thenAnswer(
@@ -37,7 +52,7 @@ void main() {
     );
 
     blocTest<MainScreenBloc, MainState>(
-      'should emit [MainLoading, MainError] when use case emits Failure',
+      'should emit MainError when use case emits Failure',
       build: buildBloc,
       act: (bloc) => bloc.add(const LoadMain()),
       setUp: () {
@@ -46,7 +61,6 @@ void main() {
         );
       },
       expect: () => [
-        const MainLoading(),
         isA<MainError>().having(
           (state) => state.error,
           'error',
@@ -56,7 +70,7 @@ void main() {
     );
 
     blocTest<MainScreenBloc, MainState>(
-      'should emit [MainLoading, MainError(UnknownFailure)] when stream errors',
+      'should emit MainError(UnknownFailure) when stream errors',
       build: buildBloc,
       act: (bloc) => bloc.add(const LoadMain()),
       setUp: () {
@@ -65,7 +79,6 @@ void main() {
         );
       },
       expect: () => [
-        const MainLoading(),
         isA<MainError>().having(
           (state) => state.error,
           'error',
@@ -111,8 +124,44 @@ void main() {
 
         return [
           MainSuccess(currencies, isRefreshing: true),
-          MainSuccess(refreshed),
+          isA<MainSuccess>()
+              .having((s) => s.currencies, 'currencies', refreshed)
+              .having((s) => s.snack?.text, 'snack.text', 'Rates updated')
+              .having((s) => s.lastCheckedAt, 'lastCheckedAt', isNotNull),
         ];
+      },
+    );
+
+    blocTest<MainScreenBloc, MainState>(
+      'should skip API when refresh is within cooldown',
+      build: buildBloc,
+      seed: () => MainSuccess(currencies),
+      setUp: () {
+        when(() => mockGetCurrencies(forceRefresh: true)).thenAnswer(
+          (_) => Stream.value(Success(currencies)),
+        );
+      },
+      act: (bloc) async {
+        bloc.add(const RefreshMainData());
+        await bloc.stream.firstWhere(
+          (s) =>
+              s is MainSuccess &&
+              !s.isRefreshing &&
+              s.snack?.text == 'Rates updated',
+        );
+        bloc.add(const RefreshMainData());
+      },
+      expect: () => [
+        MainSuccess(currencies, isRefreshing: true),
+        isA<MainSuccess>()
+            .having((s) => s.snack?.text, 'snack.text', 'Rates updated')
+            .having((s) => s.lastCheckedAt, 'lastCheckedAt', isNotNull),
+        isA<MainSuccess>()
+            .having((s) => s.snack?.text, 'snack.text', 'Already up to date')
+            .having((s) => s.lastCheckedAt, 'lastCheckedAt', isNotNull),
+      ],
+      verify: (_) {
+        verify(() => mockGetCurrencies(forceRefresh: true)).called(1);
       },
     );
 
@@ -133,7 +182,7 @@ void main() {
     );
 
     blocTest<MainScreenBloc, MainState>(
-      'should keep old data and stop refreshing when use case emits Failure',
+      'should keep old data and show offline snack when refresh fails',
       build: buildBloc,
       seed: () => MainSuccess(currencies),
       act: (bloc) => bloc.add(const RefreshMainData()),
@@ -144,12 +193,20 @@ void main() {
       },
       expect: () => [
         MainSuccess(currencies, isRefreshing: true),
-        MainSuccess(currencies, isRefreshing: false),
+        isA<MainSuccess>()
+            .having((s) => s.isRefreshing, 'isRefreshing', false)
+            .having((s) => s.currencies, 'currencies', currencies)
+            .having(
+              (s) => s.snack?.text,
+              'snack.text',
+              "Couldn't refresh — check your connection",
+            )
+            .having((s) => s.snack?.ok, 'snack.ok', false),
       ],
     );
 
     blocTest<MainScreenBloc, MainState>(
-      'regression: should clear spinner when refresh stream ends empty',
+      'should clear spinner without success snack when stream ends empty',
       build: buildBloc,
       seed: () => MainSuccess(currencies),
       act: (bloc) => bloc.add(const RefreshMainData()),

@@ -35,11 +35,7 @@ void main() {
     );
 
     when(
-      () => local.readLatestForCurrencies(
-        any(),
-        today: any(named: 'today'),
-        yesterday: any(named: 'yesterday'),
-      ),
+      () => local.readLatestForCurrencies(any()),
     ).thenAnswer((_) async => const Success([]));
 
     when(() => local.writeRates(any())).thenAnswer((_) async => const Success(null));
@@ -153,17 +149,71 @@ void main() {
       final models = allSupportedHomeModels(today: today, yesterday: yesterday);
 
       when(
-        () => local.readLatestForCurrencies(
-          any(),
-          today: today,
-          yesterday: yesterday,
-        ),
+        () => local.readLatestForCurrencies(any()),
       ).thenAnswer((_) async => Success(models));
       when(() => remote.getHomeRates()).thenAnswer(
         (_) async => const Failure(NetworkFailure()),
       );
 
       final results = await collect();
+
+      expect(results, hasLength(1));
+      expect(results.single, isA<Success<List<CurrencyRate>>>());
+    });
+
+    test(
+      'regression: should keep disk cache when cached dates lag the device clock',
+      () async {
+        final now = DateTime.now();
+        final latest = todayString(now.subtract(const Duration(days: 2)));
+        final previous = todayString(now.subtract(const Duration(days: 3)));
+        final models = allSupportedHomeModels(today: latest, yesterday: previous);
+
+        when(
+          () => local.readLatestForCurrencies(any()),
+        ).thenAnswer((_) async => Success(models));
+        when(() => remote.getHomeRates()).thenAnswer(
+          (_) async => const Failure(NetworkFailure()),
+        );
+
+        final results = await collect();
+
+        expect(results, hasLength(1));
+        expect(results.single, isA<Success<List<CurrencyRate>>>());
+        final rates = (results.single as Success<List<CurrencyRate>>).value;
+        expect(rates.first.date, DateTime.parse(latest));
+      },
+    );
+
+    test('should emit Failure on forceRefresh when remote fails even with cache', () async {
+      final today = todayString();
+      final yesterday = yesterdayString();
+      final models = allSupportedHomeModels(today: today, yesterday: yesterday);
+
+      when(
+        () => local.readLatestForCurrencies(any()),
+      ).thenAnswer((_) async => Success(models));
+      when(() => remote.getHomeRates()).thenAnswer(
+        (_) async => const Failure(NetworkFailure()),
+      );
+
+      final results = await collect(forceRefresh: true);
+
+      expect(results, hasLength(1));
+      expect(results.single, isA<Failure<List<CurrencyRate>>>());
+    });
+
+    test('should emit Success on forceRefresh even when remote matches cache', () async {
+      final today = todayString();
+      final yesterday = yesterdayString();
+      final models = allSupportedHomeModels(today: today, yesterday: yesterday);
+
+      when(
+        () => local.readLatestForCurrencies(any()),
+      ).thenAnswer((_) async => Success(models));
+      when(() => remote.getHomeRates()).thenAnswer((_) async => Success(models));
+
+      final results = await collect(forceRefresh: true);
 
       expect(results, hasLength(1));
       expect(results.single, isA<Success<List<CurrencyRate>>>());
@@ -176,11 +226,7 @@ void main() {
       final models = allSupportedHomeModels(today: today, yesterday: yesterday);
 
       when(
-        () => local.readLatestForCurrencies(
-          any(),
-          today: today,
-          yesterday: yesterday,
-        ),
+        () => local.readLatestForCurrencies(any()),
       ).thenAnswer((_) async => Success(models));
 
       when(() => remote.getHomeRates()).thenAnswer((_) async => Success(models));
@@ -210,11 +256,7 @@ void main() {
       );
 
       when(
-        () => local.readLatestForCurrencies(
-          any(),
-          today: today,
-          yesterday: yesterday,
-        ),
+        () => local.readLatestForCurrencies(any()),
       ).thenAnswer((_) async => Success(cachedModels));
 
       when(() => remote.getHomeRates()).thenAnswer(

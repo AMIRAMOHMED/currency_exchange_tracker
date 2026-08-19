@@ -20,9 +20,9 @@ class CurrencyRemoteDataSourceImpl implements CurrencyRemoteDataSource {
 
   final DioClient _client;
 
-  static final _homeCurrencies = SupportedCurrency.values
-      .map((currency) => currency.code)
-      .toList();
+  static final _homeCurrencies = [
+    for (final currency in SupportedCurrency.values) currency.code,
+  ];
 
   @override
   Future<Result<List<ExchangeRateModel>>> getHomeRates() {
@@ -31,15 +31,11 @@ class CurrencyRemoteDataSourceImpl implements CurrencyRemoteDataSource {
       final date = latest['date'];
       if (date is! String) return <ExchangeRateModel>[];
 
-      final previousDate = DateTime.parse(date).subtract(const Duration(days: 1));
-      final previous = await _client.getRates(
-        date: previousDate.toIso8601String().substring(0, 10),
-      );
-
-      return ExchangeRateModel.fromApiResponses(
-        [latest, previous],
-        _homeCurrencies,
-      );
+      final previous = await _client.getRates(date: _dayBefore(date));
+      return ExchangeRateModel.fromApiResponses([
+        latest,
+        previous,
+      ], _homeCurrencies);
     });
   }
 
@@ -47,26 +43,32 @@ class CurrencyRemoteDataSourceImpl implements CurrencyRemoteDataSource {
   Future<Result<List<ExchangeRateModel>>> getRatesForDates(
     List<String> dates,
     String targetCurrency,
-  ) {
-    if (dates.isEmpty) return Future.value(Success([]));
+  ) async {
+    if (dates.isEmpty) return const Success([]);
 
     return RestErrorParser.safeCall(() async {
-      final responses = await Future.wait(
-        dates.map((date) => _fetchDate(date)),
-      );
+      DioException? lastError;
+      final responses = <Map<String, dynamic>>[];
 
-      return ExchangeRateModel.fromApiResponses(
-        responses.whereType<Map<String, dynamic>>().toList(),
-        [targetCurrency],
-      );
+      for (final date in dates) {
+        try {
+          responses.add(await _client.getRates(date: date));
+        } on DioException catch (error) {
+          lastError = error;
+        }
+      }
+
+      if (responses.isEmpty) {
+        if (lastError != null) throw lastError;
+        return <ExchangeRateModel>[];
+      }
+
+      return ExchangeRateModel.fromApiResponses(responses, [targetCurrency]);
     });
   }
 
-  Future<Map<String, dynamic>?> _fetchDate(String date) async {
-    try {
-      return await _client.getRates(date: date);
-    } on DioException {
-      return null;
-    }
+  static String _dayBefore(String date) {
+    final previous = DateTime.parse(date).subtract(const Duration(days: 1));
+    return previous.toIso8601String().substring(0, 10);
   }
 }

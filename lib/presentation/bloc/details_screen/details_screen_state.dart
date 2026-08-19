@@ -3,9 +3,12 @@ import 'package:equatable/equatable.dart';
 import '../../../core/errors/app_failure.dart';
 import '../../../features/currency/domain/entities/currency_rate.dart';
 import '../../../features/currency/domain/entities/history_point.dart';
+import '../../widgets/refresh_snack_listener.dart';
 
-sealed class DetailsState extends Equatable {
+sealed class DetailsState extends Equatable with HasRefreshSnack {
   const DetailsState();
+
+  DateTime? get lastCheckedAt => null;
 
   @override
   List<Object?> get props => [];
@@ -21,6 +24,8 @@ final class DetailsSuccess extends DetailsState {
     required this.history,
     this.isChartLoading = false,
     this.isRefreshing = false,
+    this.lastCheckedAt,
+    this.snack,
   });
 
   final CurrencyRate currency;
@@ -28,22 +33,39 @@ final class DetailsSuccess extends DetailsState {
   final bool isChartLoading;
   final bool isRefreshing;
 
+  @override
+  final DateTime? lastCheckedAt;
+
+  @override
+  final RefreshSnack? snack;
+
   DetailsSuccess copyWith({
     CurrencyRate? currency,
     List<HistoryPoint>? history,
     bool? isChartLoading,
     bool? isRefreshing,
+    DateTime? lastCheckedAt,
+    RefreshSnack? snack,
   }) {
     return DetailsSuccess(
       currency: currency ?? this.currency,
       history: history ?? this.history,
       isChartLoading: isChartLoading ?? this.isChartLoading,
       isRefreshing: isRefreshing ?? this.isRefreshing,
+      lastCheckedAt: lastCheckedAt ?? this.lastCheckedAt,
+      snack: snack ?? this.snack,
     );
   }
 
   @override
-  List<Object?> get props => [currency, history, isChartLoading, isRefreshing];
+  List<Object?> get props => [
+    currency,
+    history,
+    isChartLoading,
+    isRefreshing,
+    lastCheckedAt,
+    snack,
+  ];
 }
 
 final class DetailsError extends DetailsState {

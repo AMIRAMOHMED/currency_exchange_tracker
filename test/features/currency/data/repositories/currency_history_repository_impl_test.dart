@@ -161,7 +161,7 @@ void main() {
       },
     );
 
-    test('should not emit duplicate Success when forceRefresh sync matches cache', () async {
+    test('should emit Success on forceRefresh even when sync matches cache', () async {
       // Arrange
       final cached = fullWeekCache();
       when(
@@ -175,8 +175,24 @@ void main() {
       // Act
       final results = await collect(forceRefresh: true);
 
-      // Assert — identical synced data produces no extra emission
-      expect(results, isEmpty);
+      // Assert — pull-to-refresh always confirms a successful remote sync
+      expect(results, hasLength(1));
+      expect(results.single, isA<Success<List<HistoryPoint>>>());
+    });
+
+    test('should emit Failure on forceRefresh when remote fails even with cache', () async {
+      final cached = fullWeekCache();
+      when(
+        () => local.readHistoryForCurrency(code, limit: any(named: 'limit')),
+      ).thenAnswer((_) async => Success(cached));
+      when(
+        () => remote.getRatesForDates(any(), code),
+      ).thenAnswer((_) async => const Failure(NetworkFailure()));
+
+      final results = await collect(forceRefresh: true);
+
+      expect(results, hasLength(1));
+      expect(results.single, isA<Failure<List<HistoryPoint>>>());
     });
 
     test('should emit updated Success when synced data differs from cache', () async {

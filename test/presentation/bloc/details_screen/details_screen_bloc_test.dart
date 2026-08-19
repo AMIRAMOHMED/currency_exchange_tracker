@@ -1,7 +1,6 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:currency_exchange_tracker/core/errors/app_failure.dart';
 import 'package:currency_exchange_tracker/core/errors/result.dart';
-import 'package:currency_exchange_tracker/features/currency/domain/entities/currency_rate.dart';
 import 'package:currency_exchange_tracker/features/currency/domain/entities/history_point.dart';
 import 'package:currency_exchange_tracker/features/currency/domain/usecases/get_currency_history_usecase.dart';
 import 'package:currency_exchange_tracker/presentation/bloc/details_screen/details_screen_bloc.dart';
@@ -27,7 +26,7 @@ void main() {
 
   group('LoadDetails', () {
     blocTest<DetailsScreenBloc, DetailsState>(
-      'should emit [DetailsLoading, DetailsSuccess] when use case emits Success',
+      'should emit DetailsSuccess without re-emitting the initial DetailsLoading',
       build: buildBloc,
       act: (bloc) => bloc.add(LoadDetails(currency)),
       setUp: () {
@@ -40,7 +39,6 @@ void main() {
         ).thenAnswer((_) => Stream.value(Success(history)));
       },
       expect: () => [
-        const DetailsLoading(),
         DetailsSuccess(currency: currency, history: sampleHistoryPoints(7, anchor: anchor)),
       ],
     );
@@ -61,7 +59,6 @@ void main() {
       expect: () {
         final history = sampleHistoryPoints(3, anchor: anchor);
         return [
-          const DetailsLoading(),
           DetailsSuccess(
             currency: currency,
             history: history,
@@ -77,7 +74,7 @@ void main() {
     );
 
     blocTest<DetailsScreenBloc, DetailsState>(
-      'should emit [DetailsLoading, DetailsError] when use case emits Failure',
+      'should emit DetailsError when use case emits Failure',
       build: buildBloc,
       act: (bloc) => bloc.add(LoadDetails(currency)),
       setUp: () {
@@ -91,7 +88,6 @@ void main() {
         );
       },
       expect: () => [
-        const DetailsLoading(),
         isA<DetailsError>().having(
           (state) => state.error,
           'error',
@@ -146,8 +142,62 @@ void main() {
 
         return [
           previous.copyWith(isRefreshing: true),
-          DetailsSuccess(currency: currency, history: refreshed),
+          isA<DetailsSuccess>()
+              .having((s) => s.history, 'history', refreshed)
+              .having(
+                (s) => s.snack?.text,
+                'snack.text',
+                startsWith('Up to date'),
+              )
+              .having((s) => s.lastCheckedAt, 'lastCheckedAt', isNotNull),
         ];
+      },
+    );
+
+    blocTest<DetailsScreenBloc, DetailsState>(
+      'should skip API when refresh is within cooldown',
+      build: buildBloc,
+      seed: () => previous,
+      setUp: () {
+        when(
+          () => mockGetHistory(
+            code: currency.code,
+            anchorDate: currency.date,
+            forceRefresh: true,
+          ),
+        ).thenAnswer((_) => Stream.value(Success(history)));
+      },
+      act: (bloc) async {
+        bloc.add(RefreshDetailsData(currency));
+        await bloc.stream.firstWhere(
+          (s) =>
+              s is DetailsSuccess &&
+              !s.isRefreshing &&
+              (s.snack?.text.startsWith('Up to date') ?? false),
+        );
+        bloc.add(RefreshDetailsData(currency));
+      },
+      expect: () => [
+        previous.copyWith(isRefreshing: true),
+        isA<DetailsSuccess>()
+            .having(
+              (s) => s.snack?.text,
+              'snack.text',
+              startsWith('Up to date'),
+            )
+            .having((s) => s.lastCheckedAt, 'lastCheckedAt', isNotNull),
+        isA<DetailsSuccess>()
+            .having((s) => s.snack?.text, 'snack.text', 'Already up to date')
+            .having((s) => s.lastCheckedAt, 'lastCheckedAt', isNotNull),
+      ],
+      verify: (_) {
+        verify(
+          () => mockGetHistory(
+            code: currency.code,
+            anchorDate: currency.date,
+            forceRefresh: true,
+          ),
+        ).called(1);
       },
     );
 
@@ -196,7 +246,7 @@ void main() {
     );
 
     blocTest<DetailsScreenBloc, DetailsState>(
-      'should keep previous history when refresh emits Failure',
+      'should keep previous history and show offline snack when refresh fails',
       build: buildBloc,
       seed: () => previous,
       act: (bloc) => bloc.add(RefreshDetailsData(currency)),
@@ -213,12 +263,20 @@ void main() {
       },
       expect: () => [
         previous.copyWith(isRefreshing: true),
-        previous.copyWith(isRefreshing: false),
+        isA<DetailsSuccess>()
+            .having((s) => s.isRefreshing, 'isRefreshing', false)
+            .having((s) => s.history, 'history', history)
+            .having(
+              (s) => s.snack?.text,
+              'snack.text',
+              "Couldn't refresh — check your connection",
+            )
+            .having((s) => s.snack?.ok, 'snack.ok', false),
       ],
     );
 
     blocTest<DetailsScreenBloc, DetailsState>(
-      'should force isRefreshing=false when stream ends without emission',
+      'should clear spinner without success snack when stream ends empty',
       build: buildBloc,
       seed: () => previous,
       act: (bloc) => bloc.add(RefreshDetailsData(currency)),

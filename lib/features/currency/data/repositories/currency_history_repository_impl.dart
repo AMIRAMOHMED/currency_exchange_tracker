@@ -20,6 +20,9 @@ class CurrencyHistoryRepositoryImpl implements CurrencyHistoryRepository {
   final CurrencyLocalDataSource _local;
 
   static const _minPoints = 2;
+  static const _unavailable = Failure<List<HistoryPoint>>(
+    ServerFailure(message: 'No history available for this currency'),
+  );
   static final _dateFormat = DateFormat('yyyy-MM-dd');
 
   @override
@@ -30,17 +33,16 @@ class CurrencyHistoryRepositoryImpl implements CurrencyHistoryRepository {
     DateTime? anchorDate,
   }) async* {
     final symbol = code.toUpperCase();
-
     final cached = await _readCached(symbol, days);
     final cachedPoints = _toPoints(cached);
-    final anchor = _anchor(anchorDate, cached);
+    final enough = cachedPoints.length >= _minPoints;
+    final anchor = anchorDate != null
+        ? _dateFormat.format(anchorDate)
+        : cached.firstOrNull?.date;
 
-    if (!forceRefresh && cachedPoints.length >= _minPoints) {
+    if (!forceRefresh && enough) {
       yield Success(cachedPoints);
-      final missing = anchor != null
-          ? _missingDates(cached, days, anchor)
-          : <String>[];
-      if (missing.isEmpty) {
+      if (anchor == null || _missingDates(cached, days, anchor).isEmpty) {
         return;
       }
     }
@@ -48,19 +50,19 @@ class CurrencyHistoryRepositoryImpl implements CurrencyHistoryRepository {
     final synced = await _sync(symbol, days, cached, forceRefresh, anchor);
     switch (synced) {
       case Success(:final value):
-        if (cachedPoints.length < _minPoints ||
-            !listEquals(cachedPoints, value)) {
+        if (forceRefresh || !enough || !listEquals(cachedPoints, value)) {
           yield Success(value);
         }
       case Failure(:final error):
-        if (cachedPoints.length < _minPoints) yield Failure(error);
+        if (forceRefresh || !enough) yield Failure(error);
     }
   }
 
   Future<List<ExchangeRateModel>> _readCached(String symbol, int days) async {
-    final local = await _local.readHistoryForCurrency(symbol, limit: days);
-    if (local case Success(:final value)) return value;
-    return [];
+    return switch (await _local.readHistoryForCurrency(symbol, limit: days)) {
+      Success(:final value) => value,
+      Failure() => [],
+    };
   }
 
   Future<Result<List<HistoryPoint>>> _sync(
@@ -70,52 +72,28 @@ class CurrencyHistoryRepositoryImpl implements CurrencyHistoryRepository {
     bool forceRefresh,
     String? anchor,
   ) async {
-    if (anchor == null) {
-      return const Failure(
-        ServerFailure(message: 'No history available for this currency'),
-      );
-    }
+    if (anchor == null) return _unavailable;
 
-    final missing = forceRefresh
+    final dates = forceRefresh
         ? _dateRange(anchor, days)
         : _missingDates(cached, days, anchor);
-    if (missing.isEmpty) {
-      return _pointsOrFailure(cached);
-    }
+    if (dates.isEmpty) return _pointsOrFailure(cached);
 
-    final remote = await _remote.getRatesForDates(missing, symbol);
+    final remote = await _remote.getRatesForDates(dates, symbol);
     switch (remote) {
       case Failure(:final error):
-        return cached.length >= _minPoints
-            ? Success(_toPoints(cached))
-            : Failure(error);
+        return Failure(error);
+      case Success(:final value) when value.isEmpty:
+        return _unavailable;
       case Success(:final value):
-        if (value.isEmpty && cached.length < _minPoints) {
-          return const Failure(
-            ServerFailure(message: 'No history available for this currency'),
-          );
-        }
-
-        if (value.isNotEmpty) {
-          await _local.writeRates(value);
-        }
-        final afterCache = await _readCached(symbol, days);
-        return _pointsOrFailure(afterCache);
+        await _local.writeRates(value);
+        return _pointsOrFailure(await _readCached(symbol, days));
     }
-  }
-
-  String? _anchor(DateTime? fromList, List<ExchangeRateModel> cached) {
-    if (fromList != null) return _dateFormat.format(fromList);
-    return cached.firstOrNull?.date;
   }
 
   Result<List<HistoryPoint>> _pointsOrFailure(List<ExchangeRateModel> models) {
     final points = _toPoints(models);
-    if (points.length < _minPoints) {
-      return const Failure(
-        ServerFailure(message: 'No history available for this currency'),
-      );
-    }
+    if (points.length < _minPoints) return _unavailable;
     return Success(points);
   }
 
@@ -140,16 +118,9 @@ class CurrencyHistoryRepositoryImpl implements CurrencyHistoryRepository {
   }
 
   List<HistoryPoint> _toPoints(List<ExchangeRateModel> models) {
-    final points =
-        models
-            .map(
-              (model) => HistoryPoint(
-                date: DateTime.parse(model.date),
-                rate: model.rate,
-              ),
-            )
-            .toList()
-          ..sort((a, b) => a.date.compareTo(b.date));
-    return points;
+    return [
+      for (final model in models)
+        HistoryPoint(date: DateTime.parse(model.date), rate: model.rate),
+    ]..sort((a, b) => a.date.compareTo(b.date));
   }
 }

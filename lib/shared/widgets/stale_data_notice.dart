@@ -5,10 +5,10 @@ import 'package:currency_exchange_tracker/core/theme/app_colors.dart';
 import 'package:currency_exchange_tracker/core/theme/app_spacing.dart';
 
 class StaleDataNotice extends StatelessWidget {
-  const StaleDataNotice({super.key, required this.date, this.onRefresh});
+  const StaleDataNotice({super.key, required this.date, this.checkedAt});
 
   final DateTime date;
-  final VoidCallback? onRefresh;
+  final DateTime? checkedAt;
 
   static bool shouldShow(DateTime date) {
     final now = DateTime.now();
@@ -21,6 +21,9 @@ class StaleDataNotice extends StatelessWidget {
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     final formattedDate = DateFormat.MMMd().format(date);
+    final checkedLabel = checkedAt == null
+        ? null
+        : 'Checked at ${DateFormat.jm().format(checkedAt!)}';
 
     return Container(
       width: double.infinity,
@@ -40,29 +43,19 @@ class StaleDataNotice extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Rates from $formattedDate',
+                  'Latest available rates — $formattedDate',
                   style: textTheme.titleMedium?.copyWith(
                     color: AppColors.primary500,
                   ),
                 ),
                 const SizedBox(height: AppSpacing.xs),
                 Text(
-                  "These rates aren't from today",
+                  checkedLabel ?? "Today's rates aren't published yet",
                   style: textTheme.bodySmall?.copyWith(
                     color: AppColors.primary500,
                   ),
                 ),
               ],
-            ),
-          ),
-          IconButton(
-            onPressed: onRefresh,
-            icon: const Icon(Icons.refresh_rounded, size: 18),
-            color: AppColors.textSecondary,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            style: IconButton.styleFrom(
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
           ),
         ],

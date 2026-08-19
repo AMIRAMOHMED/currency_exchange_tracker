@@ -21,9 +21,9 @@ class CurrencyRepositoryImpl implements CurrencyRepository {
   final CurrencyLocalDataSource _local;
 
   static final _dateFormat = DateFormat('yyyy-MM-dd');
-  static final _currencyCodes = SupportedCurrency.values
-      .map((currency) => currency.code)
-      .toList();
+  static final _currencyCodes = [
+    for (final currency in SupportedCurrency.values) currency.code,
+  ];
 
   ({String date, List<CurrencyRate> rates, bool fresh})? _memory;
 
@@ -32,25 +32,21 @@ class CurrencyRepositoryImpl implements CurrencyRepository {
     bool forceRefresh = false,
   }) async* {
     final today = _dateFormat.format(DateTime.now());
-    final yesterday = _dateFormat.format(
-      DateTime.now().subtract(const Duration(days: 1)),
-    );
 
-    // Always load cache so we can compare it with internet data later
-    final memoryCached = _cachedRates(today);
-    final cached = memoryCached ?? await _diskRates(today, yesterday);
+    final cached = _memoryRates(today) ?? await _diskRates(today);
 
     if (!forceRefresh && cached != null) {
       yield Success(cached);
       if (_memory?.fresh == true) return;
     }
 
+    final showOutcome = forceRefresh || cached == null;
     final remote = await _remote.getHomeRates();
     switch (remote) {
       case Failure(:final error):
-        if (cached == null) yield Failure(error);
+        if (showOutcome) yield Failure(error);
       case Success(:final value) when value.isEmpty:
-        if (cached == null) {
+        if (showOutcome) {
           yield const Failure(
             UnknownFailure(message: 'No data returned from API'),
           );
@@ -59,14 +55,13 @@ class CurrencyRepositoryImpl implements CurrencyRepository {
         await _local.writeRates(value);
         final rates = _toRates(value);
         _memory = (date: today, rates: rates, fresh: true);
-
-        if (cached == null || !listEquals(cached, rates)) {
+        if (showOutcome || !listEquals(cached, rates)) {
           yield Success(rates);
         }
     }
   }
 
-  List<CurrencyRate>? _cachedRates(String today) {
+  List<CurrencyRate>? _memoryRates(String today) {
     final cache = _memory;
     if (cache == null || cache.date != today || cache.rates.isEmpty) {
       return null;
@@ -74,12 +69,8 @@ class CurrencyRepositoryImpl implements CurrencyRepository {
     return cache.rates;
   }
 
-  Future<List<CurrencyRate>?> _diskRates(String today, String yesterday) async {
-    final local = await _local.readLatestForCurrencies(
-      _currencyCodes,
-      today: today,
-      yesterday: yesterday,
-    );
+  Future<List<CurrencyRate>?> _diskRates(String today) async {
+    final local = await _local.readLatestForCurrencies(_currencyCodes);
     if (local case Success(:final value) when value.isNotEmpty) {
       final rates = _toRates(value);
       if (rates.isEmpty) return null;
@@ -99,7 +90,7 @@ class CurrencyRepositoryImpl implements CurrencyRepository {
     final rates = <CurrencyRate>[];
     for (final currency in SupportedCurrency.values) {
       final entries = byCurrency[currency.code];
-      if (entries == null || entries.isEmpty) continue;
+      if (entries == null) continue;
 
       entries.sort((a, b) => a.date.compareTo(b.date));
       final latest = entries.last;
